@@ -1,0 +1,286 @@
+# Fallout 4 style power armour: a chassis you climb into with pieces bolted on as ordinary items.
+
+# Armour pieces
+
+- type: entity
+  parent: BaseItem
+  id: BasePowerArmorPiece
+  abstract: true
+  name: "power armor piece"
+  components:
+  - type: Item
+    size: Small
+  - type: PowerArmorPiece
+  - type: StaticPrice
+    price: 400
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceHelmetT45
+  name: T-45 power armor helmet
+  description: An armoured helmet with a sealed visor, designed to bolt onto a power armor frame.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    layers:
+    - state: helmet-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    # All six pieces share one RSI, so the generic `inhand-left` lookup cannot be used.
+    inhandVisuals:
+      left:
+      - state: helmet-inhand-left
+      right:
+      - state: helmet-inhand-right
+  - type: PowerArmorPiece
+    slot: Helmet
+    wornStateName: helmet
+    damageReduction: 0.9
+  - type: StaticPrice
+    price: 500
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceChestT45
+  name: T-45 power armor chest piece
+  description: The chestplate and shoulder assembly of a power armor frame. Heavy, and it shows.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    layers:
+    - state: chest-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: chest-inhand-left
+      right:
+      - state: chest-inhand-right
+  - type: PowerArmorPiece
+    slot: Chest
+    wornStateName: chest
+    damageReduction: 0.85
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceLeftArmT45
+  name: T-45 power armor left arm
+  description: A powered gauntlet that slots into the left shoulder of a power armor frame.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    layers:
+    - state: lefthand-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: lefthand-inhand-left
+      right:
+      - state: lefthand-inhand-right
+  - type: PowerArmorPiece
+    slot: LeftArm
+    wornStateName: lefthand
+    damageReduction: 0.9
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceRightArmT45
+  name: T-45 power armor right arm
+  description: A powered gauntlet that slots into the right shoulder of a power armor frame.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    layers:
+    - state: righthand-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: righthand-inhand-left
+      right:
+      - state: righthand-inhand-right
+  - type: PowerArmorPiece
+    slot: RightArm
+    wornStateName: righthand
+    damageReduction: 0.9
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceLeftLegT45
+  name: T-45 power armor left leg
+  description: A servo-assisted leg that slots into the left hip of a power armor frame.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    layers:
+    - state: leftleg-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: leftleg-inhand-left
+      right:
+      - state: leftleg-inhand-right
+  - type: PowerArmorPiece
+    slot: LeftLeg
+    wornStateName: leftleg
+    damageReduction: 0.9
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceRightLegT45
+  name: T-45 power armor right leg
+  description: A servo-assisted leg that slots into the right hip of a power armor frame.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    layers:
+    - state: rightleg-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: rightleg-inhand-left
+      right:
+      - state: rightleg-inhand-right
+  - type: PowerArmorPiece
+    slot: RightLeg
+    wornStateName: rightleg
+    damageReduction: 0.9
+
+# Frames
+
+- type: entity
+  id: BasePowerArmorFrame
+  abstract: true
+  name: "power armor frame"
+  components:
+  - type: MobMover
+  - type: InputMover
+  - type: PowerArmorFrame
+    entryDelay: 3
+    exitDelay: 3
+    damageBleedThrough: 0.15
+    maxIntegrity: 300
+    # Nudge the occupant's head into the collar; needs tuning per frame.
+    pilotHeadOffset: 0, 0
+  - type: ContainerContainer
+    containers:
+      power-armor-pilot-slot:
+        !type:ContainerSlot
+        # Show the occupant, else the container system occludes their sprite entirely.
+        showEnts: true
+  # Whitelist only excludes non-power-armour items; slot matching is enforced in SharedPowerArmorSystem.
+  - type: ItemSlots
+    slots:
+      helmet:
+        name: power-armor-slot-helmet
+        whitelist:
+          components:
+          - PowerArmorPiece
+      chest:
+        name: power-armor-slot-chest
+        whitelist:
+          components:
+          - PowerArmorPiece
+      leftArm:
+        name: power-armor-slot-left-arm
+        whitelist:
+          components:
+          - PowerArmorPiece
+      rightArm:
+        name: power-armor-slot-right-arm
+        whitelist:
+          components:
+          - PowerArmorPiece
+      leftLeg:
+        name: power-armor-slot-left-leg
+        whitelist:
+          components:
+          - PowerArmorPiece
+      rightLeg:
+        name: power-armor-slot-right-leg
+        whitelist:
+          components:
+          - PowerArmorPiece
+  - type: Sprite
+    drawdepth: Mobs
+    # Feet are pre-shifted onto the mob ground line, so no per-layer offset is needed.
+    scale: 1.25, 1.25
+    # Stay upright; the worn states still snap to the direction faced.
+    noRot: true
+    layers:
+    # Chassis is backmost; armour bolts on over it.
+    - map: [ "enum.PowerArmorVisualLayers.Frame" ]
+      sprite: _Nuclear14/Clothing/PowerArmorFrame/frame.rsi
+      state: frame
+    - map: [ "enum.PowerArmorVisualLayers.LeftLeg" ]
+      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      state: leftleg
+      visible: false
+    - map: [ "enum.PowerArmorVisualLayers.RightLeg" ]
+      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      state: rightleg
+      visible: false
+    - map: [ "enum.PowerArmorVisualLayers.LeftArm" ]
+      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      state: lefthand
+      visible: false
+    - map: [ "enum.PowerArmorVisualLayers.RightArm" ]
+      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      state: righthand
+      visible: false
+    - map: [ "enum.PowerArmorVisualLayers.Chest" ]
+      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      state: chest
+      visible: false
+    - map: [ "enum.PowerArmorVisualLayers.Helmet" ]
+      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      state: helmet
+      visible: false
+  - type: Physics
+    bodyType: KinematicController
+  - type: Fixtures
+    fixtures:
+      fix1:
+        shape:
+          !type:PhysShapeCircle
+          radius: 0.45
+        density: 400
+        mask:
+        - MobMask
+        layer:
+        - MobLayer
+  - type: MovementSpeedModifier
+    # Heavy: slower than a man on foot in both gaits.
+    baseWalkSpeed: 2
+    baseSprintSpeed: 3
+  - type: Clickable
+  - type: DoAfter
+  - type: NoSlip
+  - type: Damageable
+    damageContainer: Inorganic
+  - type: Destructible
+    thresholds:
+    - trigger:
+        !type:DamageTrigger
+        damage: 300
+      behaviors:
+      - !type:PlaySoundBehavior
+        sound:
+          collection: MetalBreak
+  - type: FootstepModifier
+    footstepSoundCollection:
+      collection: N14FootstepPowerArmor
+  - type: Tag
+    tags:
+    - FootstepSound
+  - type: StaticPrice
+    price: 1500
+
+- type: entity
+  parent: BasePowerArmorFrame
+  id: PowerArmorFrameT45
+  name: T-45 power armor frame
+  description: A battered servo-assisted chassis in the classic T-45 layout. Climb in, then bolt the armour on.
