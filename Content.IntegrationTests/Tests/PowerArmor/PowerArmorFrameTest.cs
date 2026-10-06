@@ -30,14 +30,14 @@ namespace Content.IntegrationTests.Tests.PowerArmor
     public sealed class PowerArmorFrameTest
     {
         private const string PilotProto = "PowerArmorFrameTestPilot";
-        private const string FrameProto = "PowerArmorFrameT45";
+        private const string FrameProto = "PowerArmorFrame";
         private const string JunkProto = "PowerArmorFrameTestJunk";
-        private const string HelmetProto = "PowerArmorPieceHelmetT45";
-        private const string ChestProto = "PowerArmorPieceChestT45";
-        private const string LeftArmProto = "PowerArmorPieceLeftArmT45";
-        private const string RightArmProto = "PowerArmorPieceRightArmT45";
-        private const string LeftLegProto = "PowerArmorPieceLeftLegT45";
-        private const string RightLegProto = "PowerArmorPieceRightLegT45";
+        private const string HelmetProto = "PowerArmorPieceHelmetT51";
+        private const string ChestProto = "PowerArmorPieceChestT51";
+        private const string LeftArmProto = "PowerArmorPieceLeftArmT51";
+        private const string RightArmProto = "PowerArmorPieceRightArmT51";
+        private const string LeftLegProto = "PowerArmorPieceLeftLegT51";
+        private const string RightLegProto = "PowerArmorPieceRightLegT51";
 
         [TestPrototypes]
         private const string Prototypes = @"
@@ -60,6 +60,9 @@ namespace Content.IntegrationTests.Tests.PowerArmor
             (LeftLegProto, PowerArmorPieceSlot.LeftLeg),
             (RightLegProto, PowerArmorPieceSlot.RightLeg),
         ];
+
+        /// <summary>Every armour set, so the universal frame is checked against all of them.</summary>
+        private static readonly string[] SetPrefixes = ["T51", "T45", "APA"];
 
         [Test]
         public async Task PilotEntersAndLeavesTheFrame()
@@ -316,6 +319,70 @@ namespace Content.IntegrationTests.Tests.PowerArmor
                     AssertLayerVisible(sprites, clientFrame, sprite, PowerArmorVisualLayers.Frame, true);
                 });
             });
+
+            await pair.CleanReturnAsync();
+        }
+
+        /// <summary>
+        /// The frame is one chassis for every armour set, so each set must bolt on and render
+        /// through it. Also proves the layers swap RSI: all three sets are separate RSIs.
+        /// </summary>
+        [Test]
+        public async Task EverySetFitsTheUniversalFrameAndDrivesItsOwnSprite()
+        {
+            await using var pair = await PoolManager.GetServerClient(new PoolSettings { Connected = true });
+            var server = pair.Server;
+            var client = pair.Client;
+
+            var sEntManager = server.ResolveDependency<IEntityManager>();
+            var cEntManager = client.ResolveDependency<IEntityManager>();
+            var powerArmor = sEntManager.EntitySysManager.GetEntitySystem<SharedPowerArmorSystem>();
+
+            var testMap = await pair.CreateTestMap();
+
+            foreach (var set in SetPrefixes)
+            {
+                EntityUid frame = default;
+
+                await server.WaitPost(() => frame = sEntManager.SpawnEntity(FrameProto, testMap.GridCoords));
+                await pair.RunTicksSync(5);
+
+                await server.WaitPost(() =>
+                {
+                    foreach (var (suffix, slot) in FullSet)
+                    {
+                        var piece = sEntManager.SpawnEntity($"PowerArmorPiece{suffix}{set}", testMap.GridCoords);
+                        Assert.That(powerArmor.TryInstallPiece(frame, piece), Is.True, $"{set} {suffix}");
+                    }
+                });
+
+                await pair.RunTicksSync(10);
+
+                var clientFrame = cEntManager.GetEntity(sEntManager.GetNetEntity(frame));
+                var seenRsis = new HashSet<string>();
+
+                await client.WaitAssertion(() =>
+                {
+                    var sprite = cEntManager.GetComponent<SpriteComponent>(clientFrame);
+                    var sprites = cEntManager.EntitySysManager.GetEntitySystem<SpriteSystem>();
+
+                    foreach (var (_, slot) in FullSet)
+                    {
+                        var layer = SharedPowerArmorSystem.LayerFor(slot);
+                        AssertLayerVisible(sprites, clientFrame, sprite, layer, true, $"{set} {slot}");
+                        seenRsis.Add(sprites.LayerGetRSI((clientFrame, sprite), layer)?.Path.ToString() ?? "none");
+                    }
+
+                    AssertLayerVisible(sprites, clientFrame, sprite, PowerArmorVisualLayers.Frame, true, $"{set} frame");
+                });
+
+                Assert.That(seenRsis, Has.Count.EqualTo(1), $"{set}: every piece shares one RSI");
+                Assert.That(seenRsis.First(), Does.Contain($"PowerArmorPieces{set}"),
+                    $"{set}: the frame must draw from that set's RSI");
+
+                await server.WaitPost(() => sEntManager.DeleteEntity(frame));
+                await pair.RunTicksSync(5);
+            }
 
             await pair.CleanReturnAsync();
         }

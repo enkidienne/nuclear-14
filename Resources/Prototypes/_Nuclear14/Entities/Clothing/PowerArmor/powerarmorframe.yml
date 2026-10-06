@@ -22,16 +22,16 @@
 
 - type: entity
   parent: BasePowerArmorPiece
-  id: PowerArmorPieceHelmetT45
-  name: T-45 power armor helmet
+  id: PowerArmorPieceHelmetT51
+  name: T-51 power armor helmet
   description: An armoured helmet with a sealed visor, designed to bolt onto a power armor frame.
   components:
   - type: Sprite
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     layers:
     - state: helmet-icon
   - type: Item
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     inhandVisuals:
       left:
       - state: helmet-inhand-left
@@ -46,16 +46,16 @@
 
 - type: entity
   parent: BasePowerArmorPiece
-  id: PowerArmorPieceChestT45
-  name: T-45 power armor chest piece
+  id: PowerArmorPieceChestT51
+  name: T-51 power armor chest piece
   description: The chestplate and shoulder assembly of a power armor frame. Heavy, and it shows.
   components:
   - type: Sprite
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     layers:
     - state: chest-icon
   - type: Item
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     inhandVisuals:
       left:
       - state: chest-inhand-left
@@ -75,16 +75,16 @@
 
 - type: entity
   parent: BasePowerArmorPiece
-  id: PowerArmorPieceLeftArmT45
-  name: T-45 power armor left arm
+  id: PowerArmorPieceLeftArmT51
+  name: T-51 power armor left arm
   description: A powered gauntlet that slots into the left shoulder of a power armor frame.
   components:
   - type: Sprite
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     layers:
     - state: lefthand-icon
   - type: Item
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     inhandVisuals:
       left:
       - state: lefthand-inhand-left
@@ -97,16 +97,16 @@
 
 - type: entity
   parent: BasePowerArmorPiece
-  id: PowerArmorPieceRightArmT45
-  name: T-45 power armor right arm
+  id: PowerArmorPieceRightArmT51
+  name: T-51 power armor right arm
   description: A powered gauntlet that slots into the right shoulder of a power armor frame.
   components:
   - type: Sprite
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     layers:
     - state: righthand-icon
   - type: Item
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     inhandVisuals:
       left:
       - state: righthand-inhand-left
@@ -119,16 +119,16 @@
 
 - type: entity
   parent: BasePowerArmorPiece
-  id: PowerArmorPieceLeftLegT45
-  name: T-45 power armor left leg
+  id: PowerArmorPieceLeftLegT51
+  name: T-51 power armor left leg
   description: A servo-assisted leg that slots into the left hip of a power armor frame.
   components:
   - type: Sprite
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     layers:
     - state: leftleg-icon
   - type: Item
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     inhandVisuals:
       left:
       - state: leftleg-inhand-left
@@ -141,16 +141,16 @@
 
 - type: entity
   parent: BasePowerArmorPiece
-  id: PowerArmorPieceRightLegT45
-  name: T-45 power armor right leg
+  id: PowerArmorPieceRightLegT51
+  name: T-51 power armor right leg
   description: A servo-assisted leg that slots into the right hip of a power armor frame.
   components:
   - type: Sprite
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     layers:
     - state: rightleg-icon
   - type: Item
-    sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
     inhandVisuals:
       left:
       - state: rightleg-inhand-left
@@ -160,6 +160,301 @@
     slot: RightLeg
     wornStateName: rightleg
 
+# T-45: mid-weight, older than the T-51.
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceHelmetT45
+  name: T-45 power armor helmet
+  description: A dented but serviceable helmet with a cracked visor.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    layers:
+    - state: helmet-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: helmet-inhand-left
+      right:
+      - state: helmet-inhand-right
+  - type: PowerArmorPiece
+    slot: Helmet
+    wornStateName: helmet
+    integrity: 12
+    modifiers:
+      coefficients:
+        Blunt: 0.85
+        Slash: 0.85
+        Piercing: 0.88
+        Heat: 0.85
+  - type: StaticPrice
+    price: 425
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceChestT45
+  name: T-45 power armor chest piece
+  description: Scuffed chestplate and shoulder assembly. Lighter than a T-51.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    layers:
+    - state: chest-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: chest-inhand-left
+      right:
+      - state: chest-inhand-right
+  - type: PowerArmorPiece
+    slot: Chest
+    wornStateName: chest
+    integrity: 20
+    modifiers:
+      coefficients:
+        Blunt: 0.75
+        Slash: 0.75
+        Piercing: 0.8
+        Heat: 0.75
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceLeftArmT45
+  name: T-45 power armor left arm
+  description: A powered gauntlet for the left shoulder. Some of the servos are held on with tape.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    layers:
+    - state: lefthand-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: lefthand-inhand-left
+      right:
+      - state: lefthand-inhand-right
+  - type: PowerArmorPiece
+    slot: LeftArm
+    wornStateName: lefthand
+    integrity: 12
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceRightArmT45
+  name: T-45 power armor right arm
+  description: A powered gauntlet for the right shoulder. Some of the servos are held on with tape.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    layers:
+    - state: righthand-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: righthand-inhand-left
+      right:
+      - state: righthand-inhand-right
+  - type: PowerArmorPiece
+    slot: RightArm
+    wornStateName: righthand
+    integrity: 12
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceLeftLegT45
+  name: T-45 power armor left leg
+  description: A servo-assisted leg for the left hip, with a patched shin guard.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    layers:
+    - state: leftleg-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: leftleg-inhand-left
+      right:
+      - state: leftleg-inhand-right
+  - type: PowerArmorPiece
+    slot: LeftLeg
+    wornStateName: leftleg
+    integrity: 12
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceRightLegT45
+  name: T-45 power armor right leg
+  description: A servo-assisted leg for the right hip, with a patched shin guard.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    layers:
+    - state: rightleg-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesT45/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: rightleg-inhand-left
+      right:
+      - state: rightleg-inhand-right
+  - type: PowerArmorPiece
+    slot: RightLeg
+    wornStateName: rightleg
+    integrity: 12
+
+# APA: scout frame, least armour of the three.
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceHelmetAPA
+  name: APA power armor helmet
+  description: A lightweight scout helmet with a single wide visor.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    layers:
+    - state: helmet-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: helmet-inhand-left
+      right:
+      - state: helmet-inhand-right
+  - type: PowerArmorPiece
+    slot: Helmet
+    wornStateName: helmet
+    integrity: 10
+    modifiers:
+      coefficients:
+        Blunt: 0.8
+        Slash: 0.8
+        Piercing: 0.82
+        Heat: 0.8
+  - type: StaticPrice
+    price: 350
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceChestAPA
+  name: APA power armor chest piece
+  description: A thin scout cuirass. Protection is modest, but it weighs almost nothing.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    layers:
+    - state: chest-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: chest-inhand-left
+      right:
+      - state: chest-inhand-right
+  - type: PowerArmorPiece
+    slot: Chest
+    wornStateName: chest
+    integrity: 16
+    modifiers:
+      coefficients:
+        Blunt: 0.7
+        Slash: 0.7
+        Piercing: 0.75
+        Heat: 0.7
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceLeftArmAPA
+  name: APA power armor left arm
+  description: A slim powered gauntlet for the left shoulder.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    layers:
+    - state: lefthand-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: lefthand-inhand-left
+      right:
+      - state: lefthand-inhand-right
+  - type: PowerArmorPiece
+    slot: LeftArm
+    wornStateName: lefthand
+    integrity: 10
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceRightArmAPA
+  name: APA power armor right arm
+  description: A slim powered gauntlet for the right shoulder.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    layers:
+    - state: righthand-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: righthand-inhand-left
+      right:
+      - state: righthand-inhand-right
+  - type: PowerArmorPiece
+    slot: RightArm
+    wornStateName: righthand
+    integrity: 10
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceLeftLegAPA
+  name: APA power armor left leg
+  description: A light servo-assisted leg for the left hip.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    layers:
+    - state: leftleg-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: leftleg-inhand-left
+      right:
+      - state: leftleg-inhand-right
+  - type: PowerArmorPiece
+    slot: LeftLeg
+    wornStateName: leftleg
+    integrity: 10
+
+- type: entity
+  parent: BasePowerArmorPiece
+  id: PowerArmorPieceRightLegAPA
+  name: APA power armor right leg
+  description: A light servo-assisted leg for the right hip.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    layers:
+    - state: rightleg-icon
+  - type: Item
+    sprite: _Nuclear14/Clothing/PowerArmorPiecesAPA/pieces.rsi
+    inhandVisuals:
+      left:
+      - state: rightleg-inhand-left
+      right:
+      - state: rightleg-inhand-right
+  - type: PowerArmorPiece
+    slot: RightLeg
+    wornStateName: rightleg
+    integrity: 10
 
 # Frames
 
@@ -229,32 +524,33 @@
     scale: 1.25, 1.25
     noRot: true
     layers:
-    # Chassis is backmost; armour bolts on over it.
+    # Chassis is backmost; armour bolts on over it. The piece RSI below is a placeholder: the
+    # client swaps in the installed piece's own RSI, so any set can be fitted.
     - map: [ "enum.PowerArmorVisualLayers.Frame" ]
       sprite: _Nuclear14/Clothing/PowerArmorFrame/frame.rsi
       state: frame
     - map: [ "enum.PowerArmorVisualLayers.LeftLeg" ]
-      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
       state: leftleg
       visible: false
     - map: [ "enum.PowerArmorVisualLayers.RightLeg" ]
-      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
       state: rightleg
       visible: false
     - map: [ "enum.PowerArmorVisualLayers.LeftArm" ]
-      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
       state: lefthand
       visible: false
     - map: [ "enum.PowerArmorVisualLayers.RightArm" ]
-      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
       state: righthand
       visible: false
     - map: [ "enum.PowerArmorVisualLayers.Chest" ]
-      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
       state: chest
       visible: false
     - map: [ "enum.PowerArmorVisualLayers.Helmet" ]
-      sprite: _Nuclear14/Clothing/PowerArmorPieces/pieces.rsi
+      sprite: _Nuclear14/Clothing/PowerArmorPiecesT51/pieces.rsi
       state: helmet
       visible: false
   - type: Physics
@@ -305,6 +601,6 @@
 
 - type: entity
   parent: BasePowerArmorFrame
-  id: PowerArmorFrameT45
-  name: T-45 power armor frame
-  description: A battered servo-assisted chassis in the classic T-45 layout. Climb in, then bolt the armour on.
+  id: PowerArmorFrame
+  name: power armor frame
+  description: A battered servo-assisted chassis. Climb in, then bolt the armour on. Any set fits.
