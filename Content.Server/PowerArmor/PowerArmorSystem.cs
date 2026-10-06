@@ -1,5 +1,8 @@
+using System.Collections.Generic;
+using Content.Server.Repairable;
 using Content.Shared.ActionBlocker;
 using Content.Shared.Damage;
+using Content.Shared.Damage.Components;
 using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
 using Content.Shared.DragDrop;
@@ -11,15 +14,17 @@ using Content.Shared.Verbs;
 using Content.Shared.Whitelist;
 using Robust.Shared.Containers;
 using Robust.Shared.Localization;
+using Robust.Shared.Utility;
 
 namespace Content.Server.PowerArmor;
 
-/// <summary>Enter/exit verbs, drag-drop entry, integrity and damage bleed-through.</summary>
-public sealed class PowerArmorSystem : SharedPowerArmorSystem
+/// Enter/exit verbs, drag-drop entry, integrity and damage bleed-through.
+public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
 {
+
+    [Dependency] private readonly ActionBlockerSystem _actionBlocker = default!;
     [Dependency] private readonly DamageableSystem _damageable = default!;
     [Dependency] private readonly EntityWhitelistSystem _whitelist = default!;
-    [Dependency] private readonly SharedContainerSystem _container = default!;
     [Dependency] private readonly SharedDoAfterSystem _doAfter = default!;
     [Dependency] private readonly SharedPopupSystem _popup = default!;
 
@@ -33,6 +38,9 @@ public sealed class PowerArmorSystem : SharedPowerArmorSystem
         SubscribeLocalEvent<PowerArmorFrameComponent, DragDropTargetEvent>(OnDragDrop);
         SubscribeLocalEvent<PowerArmorFrameComponent, CanDropTargetEvent>(OnCanDragDrop);
         SubscribeLocalEvent<PowerArmorFrameComponent, DamageChangedEvent>(OnDamageChanged);
+        SubscribeLocalEvent<PowerArmorPieceComponent, BeforeDamageChangedEvent>(OnPieceDamageBefore);
+       SubscribeLocalEvent<PowerArmorFrameComponent, EntInsertedIntoContainerMessage>(OnPieceFitted);
+        SubscribeLocalEvent<PowerArmorFrameComponent, EntRemovedFromContainerMessage>(OnPieceRemoved);
         SubscribeLocalEvent<PowerArmorFrameComponent, DestructionEventArgs>(OnDestruction);
         SubscribeLocalEvent<PowerArmorFrameComponent, UpdateCanMoveEvent>(OnCanMove);
     }
@@ -74,7 +82,7 @@ public sealed class PowerArmorSystem : SharedPowerArmorSystem
             Priority = 1,
             Act = () =>
             {
-                // Climbing out of your own suit is instant; dragging somebody else out is not.
+                // Exiting yourself is instant; dragging someone else out is not.
                 if (self)
                 {
                     TryEject(uid, component);
@@ -131,43 +139,82 @@ public sealed class PowerArmorSystem : SharedPowerArmorSystem
         args.CanDrop |= !component.Broken && CanInsert(uid, args.Dragged, component);
     }
 
+    /// A piece has no durability of its own: a hit on fitted armour is billed to the frame.
+    private void OnPieceDamageBefore(EntityUid uid, PowerArmorPieceComponent component, ref BeforeDamageChangedEvent args)
+    {
+        if (!TryGetHostFrame(uid, out var frame))
+            return;
+
+       args.Cancelled = true;
+        _damageable.TryChangeDamage(frame, args.Damage);
+    }
+
+    /// Keeps the pool in step with the frame's accumulated damage.
     private void OnDamageChanged(EntityUid uid, PowerArmorFrameComponent component, DamageChangedEvent args)
     {
-        var integrity = component.MaxIntegrity - args.Damageable.TotalDamage;
-        SetIntegrity(uid, integrity, component);
+        SetIntegrity(uid, component.MaxIntegrity - args.Damageable.TotalDamage, component);
 
-        // Structural hits only partially carry through to the occupant.
-        if (!args.DamageIncreased || args.DamageDelta == null || component.DamageBleedThrough <= 0)
+               if (!args.DamageIncreased || args.DamageDelta == null || component.DamageBleedThrough <= 0)
             return;
 
         if (component.PilotSlot.ContainedEntity is not { } pilot)
             return;
 
-        var through = args.DamageDelta * InstalledReduction(uid) * component.DamageBleedThrough;
+        var through = DamageSpecifier.ApplyModifierSets(args.DamageDelta, InstalledModifiers(uid)) * component.DamageBleedThrough;
         _damageable.TryChangeDamage(pilot, through);
     }
 
-    /// <summary>Damage multiplier contributed by the currently installed armour.</summary>
-    private float InstalledReduction(EntityUid uid)
+    /// Protection contributed by the currently installed armour.
+    private IEnumerable<DamageModifierSet> InstalledModifiers(EntityUid uid)
     {
-        var reduction = 1f;
+        foreach (var slot in PowerArmorSlotIds.All)
+        {
+            if (GetPiece(uid, slot) is { } piece
+                && TryComp<PowerArmorPieceComponent>(piece, out var pieceComp))
+            {
+                yield return pieceComp.Modifiers;
+            }
+        }
+    }
+
+    /// Recomputes the pool ceiling: base chassis plus whatever is bolted on right now.
+    private void RecomputeMaxIntegrity(EntityUid uid, PowerArmorFrameComponent component)
+    {
+        var max = component.BaseIntegrity;
 
         foreach (var slot in PowerArmorSlotIds.All)
         {
             if (GetPiece(uid, slot) is { } piece
                 && TryComp<PowerArmorPieceComponent>(piece, out var pieceComp))
             {
-                reduction *= pieceComp.DamageReduction;
+                max += pieceComp.Integrity;
             }
         }
 
-        return reduction;
+        if (max == component.MaxIntegrity)
+            return;
+
+        component.MaxIntegrity = max;
+
+        // Hold Integrity == MaxIntegrity - TotalDamage, so welding cannot drift.
+        var totalDamage = CompOrNull<DamageableComponent>(uid)?.TotalDamage ?? FixedPoint2.Zero;
+        SetIntegrity(uid, max - totalDamage, component);
     }
 
+    private void OnPieceFitted(EntityUid uid, PowerArmorFrameComponent component, EntInsertedIntoContainerMessage args)
+        => RecomputeMaxIntegrity(uid, component);
+
+    private void OnPieceRemoved(EntityUid uid, PowerArmorFrameComponent component, EntRemovedFromContainerMessage args)
+        => RecomputeMaxIntegrity(uid, component);
+
+    /// Writes the pool and checks the break threshold.
+    /// Clamped to MaxIntegrity: welding's negative damage can overshoot the subtraction.
     private void SetIntegrity(EntityUid uid, FixedPoint2 integrity, PowerArmorFrameComponent component)
     {
-        if (integrity < FixedPoint2.Zero)
-            integrity = FixedPoint2.Zero;
+        integrity = FixedPoint2.Clamp(integrity, 0, component.MaxIntegrity);
+
+        if (component.Integrity == integrity)
+            return;
 
         component.Integrity = integrity;
         Dirty(uid, component);
@@ -184,8 +231,10 @@ public sealed class PowerArmorSystem : SharedPowerArmorSystem
         component.Integrity = FixedPoint2.Zero;
         Dirty(uid, component);
 
-        // Whoever is inside gets thrown clear rather than being trapped.
-        if (component.PilotSlot.ContainedEntity is { } pilot && TryEject(uid, component, pilot))
+        // Re-evaluate movement, or it keeps rolling on stale state.
+        _actionBlocker.UpdateCanMove(uid);
+
+       if (component.PilotSlot.ContainedEntity is { } pilot && TryEject(uid, component, pilot))
             _popup.PopupEntity(Loc.GetString("power-armor-frame-broken-eject"), pilot);
     }
 

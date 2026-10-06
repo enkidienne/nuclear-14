@@ -1,27 +1,32 @@
-using System;
 using Content.Shared.ActionBlocker;
+using Content.Shared.Armor;
 using Content.Shared.Containers.ItemSlots;
 using Content.Shared.DoAfter;
+using Content.Shared.Examine;
+using Content.Shared.FixedPoint;
 using Content.Shared.Interaction;
 using Content.Shared.Interaction.Components;
 using Content.Shared.Interaction.Events;
 using Content.Shared.Movement.Components;
 using Content.Shared.Movement.Systems;
+using Content.Shared.Verbs;
 using Content.Shared.Whitelist;
 using Robust.Shared.Containers;
+using Robust.Shared.Localization;
 using Robust.Shared.Serialization;
 
 namespace Content.Shared.PowerArmor;
 
 /// <summary>Entering/leaving power armour, and matching pieces to mounting points.</summary>
-public abstract class SharedPowerArmorSystem : EntitySystem
+public abstract partial class SharedPowerArmorSystem : EntitySystem
 {
     [Dependency] private readonly ActionBlockerSystem _actionBlocker = default!;
     [Dependency] private readonly EntityWhitelistSystem _whitelist = default!;
     [Dependency] private readonly ItemSlotsSystem _itemSlots = default!;
     [Dependency] private readonly SharedContainerSystem _container = default!;
     [Dependency] private readonly SharedInteractionSystem _interaction = default!;
-    [Dependency] private readonly SharedMoverController _mover = default!;
+    [Dependency] private readonly ExamineSystemShared _examine = default!;
+[Dependency] private readonly SharedMoverController _mover = default!;
 
     public override void Initialize()
     {
@@ -30,16 +35,28 @@ public abstract class SharedPowerArmorSystem : EntitySystem
         SubscribeLocalEvent<PowerArmorFrameComponent, ComponentStartup>(OnStartup);
         SubscribeLocalEvent<PowerArmorFrameComponent, ItemSlotInsertAttemptEvent>(OnSlotInsertAttempt);
         SubscribeLocalEvent<PowerArmorFrameComponent, ItemSlotEjectAttemptEvent>(OnSlotEjectAttempt);
+        // Must be shared, not server: the examine tooltip builds its verb list on the client.
+        SubscribeLocalEvent<PowerArmorFrameComponent, GetVerbsEvent<ExamineVerb>>(OnExamineFrame);
 
         SubscribeLocalEvent<PowerArmorPilotComponent, CanAttackFromContainerEvent>(OnCanAttackFromContainer);
         SubscribeLocalEvent<PowerArmorPilotComponent, AccessibleOverrideEvent>(OnAccessibleOverride);
         SubscribeLocalEvent<PowerArmorPilotComponent, InRangeOverrideEvent>(OnInRangeOverride);
+        SubscribeLocalEvent<PowerArmorPilotComponent, InteractUsingEvent>(OnPilotInteractUsing,
+            before: new[] { typeof(SharedArmorSystem) });
         SubscribeLocalEvent<PowerArmorPilotComponent, EntGotRemovedFromContainerMessage>(OnPilotRemoved);
     }
 
     protected virtual void OnStartup(EntityUid uid, PowerArmorFrameComponent component, ComponentStartup args)
     {
         component.PilotSlot = _container.EnsureContainer<ContainerSlot>(uid, component.PilotSlotId);
+
+        // The Damageable starts empty, so the pool would otherwise read 0.
+        if (component.Integrity <= 0)
+        {
+            component.MaxIntegrity = component.BaseIntegrity;
+            component.Integrity = component.MaxIntegrity;
+            Dirty(uid, component);
+        }
     }
 
     /// <summary>Maps a mounting point to the sprite layer it draws into.</summary>
@@ -80,13 +97,10 @@ public abstract class SharedPowerArmorSystem : EntitySystem
 
         SetupPilot(uid, toInsert);
         _container.Insert(toInsert, component.PilotSlot);
-
-        component.Pilot = toInsert;
-        Dirty(uid, component);
         return true;
     }
 
-    /// <summary>Moves the occupant out, leaving them standing on the frame.</summary>
+    /// <summary>Moves the occupant out onto the frame.</summary>
     public bool TryEject(EntityUid uid, PowerArmorFrameComponent? component = null, EntityUid? pilot = null)
     {
         if (!Resolve(uid, ref component))
@@ -102,13 +116,10 @@ public abstract class SharedPowerArmorSystem : EntitySystem
 
         RemovePilot(pilot.Value);
         _container.RemoveEntity(uid, pilot.Value);
-
-        component.Pilot = null;
-        Dirty(uid, component);
         return true;
     }
 
-    /// <summary>Installs a piece into the mounting point its <see cref="PowerArmorPieceComponent"/> declares.</summary>
+    /// <summary>Installs a piece into the mounting point its component declares.</summary>
     public bool TryInstallPiece(EntityUid frame, EntityUid piece, EntityUid? user = null)
     {
         if (!TryComp<PowerArmorPieceComponent>(piece, out var pieceComp))
@@ -117,10 +128,35 @@ public abstract class SharedPowerArmorSystem : EntitySystem
         return _itemSlots.TryInsert(frame, PowerArmorSlotIds.IdFor(pieceComp.Slot), piece, user);
     }
 
+    /// <summary>Unbolts whatever is fitted in <paramref name="slot"/>.</summary>
+    public bool TryRemovePiece(EntityUid frame, PowerArmorPieceSlot slot, ItemSlotsComponent? slots = null)
+    {
+        if (GetPiece(frame, slot, slots) is not { } piece)
+            return false;
+
+        return _itemSlots.TryEject(frame, PowerArmorSlotIds.IdFor(slot), null, out var ejected, slots);
+    }
+
     /// <summary>Returns the piece installed in a mounting point, if any.</summary>
     public EntityUid? GetPiece(EntityUid frame, PowerArmorPieceSlot slot, ItemSlotsComponent? slots = null)
     {
         return _itemSlots.GetItemOrNull(frame, PowerArmorSlotIds.IdFor(slot), slots);
+    }
+
+    /// <summary>The frame this piece is currently bolted to, if any.</summary>
+    public bool TryGetHostFrame(EntityUid piece, out EntityUid frame)
+    {
+        frame = default;
+
+        if (_container.TryGetContainingContainer(piece, out var container)
+            && container.Owner is { } owner
+            && HasComp<PowerArmorFrameComponent>(owner))
+        {
+            frame = owner;
+            return true;
+        }
+
+        return false;
     }
 
     private void SetupPilot(EntityUid frame, EntityUid pilot)
@@ -129,8 +165,7 @@ public abstract class SharedPowerArmorSystem : EntitySystem
         pilotComp.Frame = frame;
         Dirty(pilot, pilotComp);
 
-        // Mirrors the mech system, bypassing most interaction gating on the occupant.
-        EnsureComp<InteractionRelayComponent>(pilot);
+               EnsureComp<InteractionRelayComponent>(pilot);
         _mover.SetRelay(pilot, frame);
         _interaction.SetRelay(pilot, frame);
     }
@@ -189,20 +224,67 @@ public abstract class SharedPowerArmorSystem : EntitySystem
         args.InRange = _interaction.InRangeUnobstructed(component.Frame, args.Target);
     }
 
+    /// <summary>Forwards tool interactions on the occupant to the chassis, so the frame can be repaired.</summary>
+    /// <remarks>InteractUsingEvent is not container-relayed, and the occupant is what players click.</remarks>
+    private void OnPilotInteractUsing(EntityUid uid, PowerArmorPilotComponent component, ref InteractUsingEvent args)
+    {
+        if (args.Handled || !Exists(component.Frame))
+            return;
+
+       RaiseLocalEvent(component.Frame, args);
+    }
+
     /// <summary>The occupant left by some route other than eject; tear the relay down.</summary>
     private void OnPilotRemoved(EntityUid uid, PowerArmorPilotComponent component, EntGotRemovedFromContainerMessage args)
     {
-        var frame = component.Frame;
+        RemovePilot(uid);
+    }
 
-        RemComp<RelayInputMoverComponent>(uid);
-        RemComp<InteractionRelayComponent>(uid);
-        RemComp<PowerArmorPilotComponent>(uid);
+    /// <summary>Reports the chassis pool; the armour stats live on the pieces.</summary>
+    private void OnExamineFrame(EntityUid uid, PowerArmorFrameComponent component, GetVerbsEvent<ExamineVerb> args)
+    {
+        if (!args.CanInteract || !args.CanAccess)
+            return;
 
-        if (TryComp<PowerArmorFrameComponent>(frame, out var frameComp) && frameComp.Pilot == uid)
+        var msg = DurabilityMessage(component.Integrity, component.MaxIntegrity, component.Condition);
+
+        if (component.Broken)
         {
-            frameComp.Pilot = null;
-            Dirty(frame, frameComp);
+            msg.PushNewline();
+            msg.AddMarkupOrThrow(Loc.GetString("power-armor-durability-broken"));
         }
+
+        AddDurabilityVerb(args, component, msg);
+    }
+
+    /// <summary>Colour-codes remaining durability by fraction.</summary>
+    private FormattedMessage DurabilityMessage(
+        FixedPoint2 integrity,
+        FixedPoint2 max,
+        PowerArmorConditionScale condition)
+    {
+        var fraction = max <= 0 ? 0f : (float) integrity / (float) max;
+        var color = fraction >= condition.GoodAt
+            ? condition.GoodColor
+            : fraction >= condition.WornAt
+                ? condition.WornColor
+                : condition.BadColor;
+
+        var msg = new FormattedMessage();
+        msg.AddMarkupOrThrow(Loc.GetString("power-armor-durability-examine",
+            ("current", (int) integrity),
+            ("max", (int) max),
+            ("color", color)));
+        return msg;
+    }
+
+    private void AddDurabilityVerb<T>(GetVerbsEvent<ExamineVerb> args, T component, FormattedMessage msg)
+        where T : Component
+    {
+        _examine.AddDetailedExamineVerb(args, component, msg,
+            Loc.GetString("power-armor-durability-verb-text"),
+            "/Textures/Interface/VerbIcons/dot.svg.192dpi.png",
+            Loc.GetString("power-armor-durability-verb-message"));
     }
 }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using Content.Shared.Damage;
 using Content.Shared.FixedPoint;
 using Content.Shared.Whitelist;
 using Robust.Shared.Containers;
@@ -22,7 +23,7 @@ public enum PowerArmorPieceSlot : byte
 }
 
 /// <summary>Sprite layers a frame declares, mirroring <see cref="PowerArmorPieceSlot"/> plus the chassis.</summary>
-/// <remarks>Draw order comes from the order the prototype lists its layers, not from these values.</remarks>
+    /// <remarks>Draw order comes from the order the prototype lists them, not from these values.</remarks>
 [Serializable, NetSerializable]
 public enum PowerArmorVisualLayers : byte
 {
@@ -53,23 +54,18 @@ public static class PowerArmorSlotIds
     }
 }
 
-/// <summary>A pilotable power armor chassis; occupants climb inside and their input is relayed to it.</summary>
-/// <remarks>Armour lives in <c>ItemSlots</c> keyed by <see cref="PowerArmorSlotIds"/>, so it swaps between frames.</remarks>
-[RegisterComponent, NetworkedComponent, AutoGenerateComponentState(true)]
+/// <summary>A pilotable chassis; occupants climb inside and their input is relayed to it.</summary>
+    [RegisterComponent, NetworkedComponent, AutoGenerateComponentState(true)]
 public sealed partial class PowerArmorFrameComponent : Component
 {
     public const string DefaultPilotSlotId = "power-armor-pilot-slot";
 
-    /// <summary>Holds the occupant, whose sprite the client system reduces to a bare head.</summary>
+    /// <summary>The occupant of a frame.</summary>
     [ViewVariables]
     public ContainerSlot PilotSlot = default!;
 
     [ViewVariables]
     public readonly string PilotSlotId = DefaultPilotSlotId;
-
-    /// <summary>The entity currently inside the frame.</summary>
-    [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
-    public EntityUid? Pilot;
 
     /// <summary>Seconds taken to climb in.</summary>
     [DataField, ViewVariables(VVAccess.ReadWrite)]
@@ -87,12 +83,21 @@ public sealed partial class PowerArmorFrameComponent : Component
     [DataField]
     public float DamageBleedThrough = 0.15f;
 
-    /// <summary>Remaining structural integrity.</summary>
+    /// <summary>The single durability pool; armour pieces have none of their own.</summary>
     [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
     public FixedPoint2 Integrity;
 
-    [DataField, ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
-    public FixedPoint2 MaxIntegrity = 300;
+    /// <summary>Integrity the chassis has on its own, before any armour is bolted on.</summary>
+    [DataField]
+    public FixedPoint2 BaseIntegrity = 100;
+
+    /// <summary>Ceiling of the pool: <see cref="BaseIntegrity"/> plus every fitted piece's integrity.</summary>
+    [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
+    public FixedPoint2 MaxIntegrity;
+
+    /// <summary>Colour bands for the condition readout, by fraction remaining.</summary>
+    [DataField]
+    public PowerArmorConditionScale Condition = new();
 
     /// <summary>A wrecked frame cannot be entered or accept new pieces.</summary>
     [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
@@ -106,26 +111,41 @@ public sealed partial class PowerArmorFrameComponent : Component
     [DataField]
     public bool AllowModificationWhileOccupied = false;
 
-    /// <summary>Nudges the occupant's head into the collar; needs tuning per frame.</summary>
+    /// <summary>How far to move the occupant's head, in sprite pixels. Negative Y lifts.</summary>
     [DataField]
     public Vector2 PilotHeadOffset = Vector2.Zero;
 }
 
+/// <summary>Colour bands for a durability readout.</summary>
+[DataDefinition]
+public sealed partial class PowerArmorConditionScale
+{
+    [DataField] public string GoodColor = "green";
+    [DataField] public float GoodAt = 0.66f;
+    [DataField] public string WornColor = "yellow";
+    [DataField] public float WornAt = 0.33f;
+    [DataField] public string BadColor = "red";
+}
+
 /// <summary>A helmet, chest, arm or leg piece that bolts onto a <see cref="PowerArmorFrameComponent"/>.</summary>
-[RegisterComponent, NetworkedComponent, AutoGenerateComponentState]
+[RegisterComponent, NetworkedComponent, AutoGenerateComponentState(true)]
 public sealed partial class PowerArmorPieceComponent : Component
 {
-    /// <summary>Which mounting point this piece belongs in; the frame refuses it anywhere else.</summary>
+    /// <summary>Which mounting point this piece belongs in.</summary>
     [DataField, AutoNetworkedField]
     public PowerArmorPieceSlot Slot = PowerArmorPieceSlot.Chest;
 
-    /// <summary>RSI state drawn on the frame while installed; the RSI path comes from the piece's own sprite.</summary>
+    /// <summary>RSI state drawn on the frame while installed.</summary>
     [DataField]
     public string WornStateName = "chest";
 
-    /// <summary>Incoming damage multiplier while installed; heavier plating absorbs more.</summary>
+    /// <summary>Protection this piece contributes while installed, per damage type.</summary>
+    [DataField(required: true)]
+    public DamageModifierSet Modifiers = default!;
+
+    /// <summary>Adds to the host frame's durability ceiling; not a pool of its own.</summary>
     [DataField]
-    public float DamageReduction = 0.9f;
+    public FixedPoint2 Integrity = 15;
 }
 
 /// <summary>Placed on an entity while it occupies a <see cref="PowerArmorFrameComponent"/>.</summary>

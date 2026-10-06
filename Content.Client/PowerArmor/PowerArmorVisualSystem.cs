@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Content.Shared.Damage;
+using Content.Shared.FixedPoint;
 using Content.Shared.Humanoid;
 using Content.Shared.PowerArmor;
 using Robust.Client.GameObjects;
@@ -9,26 +11,26 @@ using Robust.Shared.GameObjects;
 
 namespace Content.Client.PowerArmor;
 
-/// <summary>Snapshots an occupant's sprite so it can be restored when they climb out.</summary>
+/// <summary>Snapshot of an occupant's sprite, for restoring on the way out.</summary>
 [RegisterComponent]
 public sealed partial class PowerArmorPilotVisualsComponent : Component
 {
     /// <summary>Visibility of every suppressed layer, keyed by index.</summary>
-    /// <remarks>Indexed because <c>SpriteComponent.LayerMap</c> is internal.</remarks>
     public Dictionary<int, bool> HiddenLayers = new();
 
-    /// <summary>Layer count the snapshot was taken at, so a stale snapshot can be detected.</summary>
-    public int CapturedLayers;
+    /// <summary>Baseline scale of each head layer, keyed by layer.</summary>
+    public Dictionary<HumanoidVisualLayers, Vector2> HeadScales = new();
 
-    public Vector2 Offset = Vector2.Zero;
+    /// <summary>Baseline offset of each head layer, keyed by layer.</summary>
+    public Dictionary<HumanoidVisualLayers, Vector2> HeadOffsets = new();
+
+    /// <summary>Layer count the snapshot was taken at.</summary>
+    public int CapturedLayers;
 }
 
-/// <summary>Composes a frame's sprite from its installed pieces and hides the occupant's body.</summary>
-/// <remarks>The head is hidden explicitly when helmeted: render order is global, not parent-then-child.</remarks>
-public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
+public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
 {
-    /// <summary>Head-only view: everything else is suppressed so it cannot poke through the armour.</summary>
-    /// <remarks>Excludes StencilMask, which ClientClothingSystem asserts is hidden with no jumpsuit.</remarks>
+    /// <summary>Head-only view; StencilMask is excluded, as ClientClothingSystem asserts it hidden.</summary>
     private static readonly HumanoidVisualLayers[] HeadLayers =
     [
         HumanoidVisualLayers.Head,
@@ -53,12 +55,64 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
 
         SubscribeLocalEvent<PowerArmorPilotComponent, ComponentStartup>(OnPilotStartup);
         SubscribeLocalEvent<PowerArmorPilotComponent, ComponentShutdown>(OnPilotShutdown);
+
     }
 
     protected override void OnStartup(EntityUid uid, PowerArmorFrameComponent component, ComponentStartup args)
     {
         base.OnStartup(uid, component, args);
         Refresh((uid, component));
+    }
+
+    /// <summary>Reapplies the head-only view, which the humanoid appearance system wipes on replicate.</summary>
+    public override void Update(float frameTime)
+    {
+        base.Update(frameTime);
+
+        foreach (var (pilotComp, state) in
+                     EntityQuery<PowerArmorPilotComponent, PowerArmorPilotVisualsComponent>().ToList())
+        {
+            var pilot = pilotComp.Owner;
+
+            if (!TryComp<PowerArmorFrameComponent>(pilotComp.Frame, out var frame)
+                || !TryComp<SpriteComponent>(pilot, out var pilotSprite)
+                || frame.PilotSlot?.ContainedEntity != pilot)
+            {
+                continue;
+            }
+
+            if (HeadStillApplied(pilot, pilotComp.Frame, pilotSprite, state, frame))
+                continue;
+
+            UpdatePilotVisuals((pilotComp.Frame, frame));
+        }
+    }
+
+    /// <summary>True while the head-only view is still fully applied.</summary>
+    private bool HeadStillApplied(
+        EntityUid pilot,
+        EntityUid frameUid,
+        SpriteComponent pilotSprite,
+        PowerArmorPilotVisualsComponent state,
+        PowerArmorFrameComponent frame)
+    {
+        var head = HumanoidVisualLayers.Head;
+
+        if (!state.HeadScales.TryGetValue(head, out var baseScale)
+            || !_sprite.LayerMapTryGet((pilot, pilotSprite), head, out var headIndex, false))
+        {
+            return false;
+        }
+
+        var shouldShow = GetPiece(frameUid, PowerArmorPieceSlot.Helmet) == null;
+        var headLayer = (SpriteComponent.Layer) pilotSprite[headIndex];
+
+        if (headLayer.Scale != baseScale || headLayer.Visible != shouldShow)
+            return false;
+
+        // The rebuild un-hides the body too, so spot-check a body layer.
+        return _sprite.LayerMapTryGet((pilot, pilotSprite), HumanoidVisualLayers.Chest, out var chestIndex, false)
+            && !pilotSprite[chestIndex].Visible;
     }
 
     private void OnFrameChanged(Entity<PowerArmorFrameComponent> ent, ref EntInsertedIntoContainerMessage args) => Refresh(ent);
@@ -68,7 +122,7 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
     private void OnPilotStartup(EntityUid uid, PowerArmorPilotComponent component, ComponentStartup args)
     {
         if (TryComp<PowerArmorFrameComponent>(component.Frame, out var frame))
-            UpdatePilotVisuals((frame.Owner, frame));
+            UpdatePilotVisuals((component.Frame, frame));
     }
 
     private void OnPilotShutdown(EntityUid uid, PowerArmorPilotComponent component, ComponentShutdown args)
@@ -87,7 +141,7 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
 
         foreach (var slot in PowerArmorSlotIds.All)
         {
-            // Via the layer map, not by index: `map:` keys parse into the enum value.
+            // Via the layer map; `map:` keys parse into the enum value.
             if (!_sprite.TryGetLayer((ent.Owner, sprite), LayerFor(slot), out var layer, false))
                 continue;
 
@@ -102,7 +156,6 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
                 continue;
             }
 
-            // The RSI comes from the piece, so new armour sets need no frame changes.
             _sprite.LayerSetRsi(layer, pieceSprite.BaseRSI);
             _sprite.LayerSetRsiState(layer, pieceComp.WornStateName);
             _sprite.LayerSetVisible(layer, true);
@@ -119,12 +172,12 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
         var helmeted = GetPiece(ent, PowerArmorPieceSlot.Helmet) != null;
         var state = EnsureComp<PowerArmorPilotVisualsComponent>(pilotUid);
 
+        // Re-snapshot if layers were added or removed while the occupant was inside.
         var layerCount = sprite.AllLayers.Count();
         if (state.CapturedLayers != layerCount)
         {
             state.HiddenLayers.Clear();
             state.CapturedLayers = layerCount;
-            state.Offset = sprite.Offset;
 
             var i = 0;
             foreach (var layer in sprite.AllLayers)
@@ -134,16 +187,23 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
         foreach (var layer in sprite.AllLayers)
             layer.Visible = false;
 
-        if (!helmeted)
+        foreach (var head in HeadLayers)
         {
-            foreach (var head in HeadLayers)
-            {
-                if (sprite.LayerMapTryGet(head, out var layerIndex))
-                    sprite[layerIndex].Visible = true;
-            }
-        }
+            if (!_sprite.LayerMapTryGet((pilotUid, sprite), head, out var layerIndex, false))
+                continue;
 
-        _sprite.SetOffset((pilotUid, sprite), state.Offset + ent.Comp.PilotHeadOffset);
+            var headLayer = (SpriteComponent.Layer) sprite[layerIndex];
+
+            // Captured on first sight: the sprite can still be mid-build.
+            state.HeadScales.TryAdd(head, headLayer.Scale);
+            state.HeadOffsets.TryAdd(head, headLayer.Offset);
+
+            // The head keeps the mob's scale: the collar notch is only ~2px against an ~8px head.
+            _sprite.LayerSetScale((pilotUid, sprite), layerIndex, state.HeadScales[head]);
+            _sprite.LayerSetOffset((pilotUid, sprite), layerIndex, state.HeadOffsets[head] + ent.Comp.PilotHeadOffset);
+
+            sprite[layerIndex].Visible = !helmeted;
+        }
     }
 
     private void RestorePilotVisuals(EntityUid uid)
@@ -165,6 +225,13 @@ public sealed class PowerArmorVisualSystem : SharedPowerArmorSystem
             index++;
         }
 
-        _sprite.SetOffset((uid, sprite), state.Offset);
+        foreach (var (head, scale) in state.HeadScales)
+        {
+            if (!_sprite.LayerMapTryGet((uid, sprite), head, out var layerIndex, false))
+                continue;
+
+            _sprite.LayerSetScale((uid, sprite), layerIndex, scale);
+            _sprite.LayerSetOffset((uid, sprite), layerIndex, state.HeadOffsets[head]);
+        }
     }
 }
