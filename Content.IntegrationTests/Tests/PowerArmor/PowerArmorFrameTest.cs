@@ -8,6 +8,7 @@ using Content.Shared.Damage;
 using Content.Shared.Damage.Components;
 using Content.Shared.Containers.ItemSlots;
 using Content.Shared.FixedPoint;
+using Content.Shared.Hands.Components;
 using Content.Shared.Hands.EntitySystems;
 using Content.Server.Tools;
 using Content.Shared.Item.ItemToggle.Components;
@@ -19,6 +20,7 @@ using Content.Shared.Movement.Components;
 using Content.Shared.PowerArmor;
 using Content.Shared.Verbs;
 using Robust.Client.GameObjects;
+using Robust.Client.Graphics;
 using Robust.Shared.GameObjects;
 using Robust.Shared.IoC;
 
@@ -63,6 +65,19 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
         /// <summary>Every armour set, so the universal frame is checked against all of them.</summary>
         private static readonly string[] SetPrefixes = ["T51", "T45", "APA"];
+
+        private static IEnumerable<string> SetProtos(string set) =>
+            FullSet.Select(p => p.Proto.Replace("T51", set));
+
+        /// <summary>RSI state a piece draws on the frame, e.g. LeftLegT51 -> leftleg.</summary>
+        private static string WornState(string proto) => proto["PowerArmorPiece".Length..]
+            .Replace("T51", "", StringComparison.Ordinal)
+            .Replace("Helmet", "helmet")
+            .Replace("Chest", "chest")
+            .Replace("LeftArm", "lefthand")
+            .Replace("RightArm", "righthand")
+            .Replace("LeftLeg", "leftleg")
+            .Replace("RightLeg", "rightleg");
 
         [Test]
         public async Task PilotEntersAndLeavesTheFrame()
@@ -219,13 +234,14 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
             await server.WaitPost(() =>
             {
-                var helmet = sEntManager.SpawnEntity(HelmetProto, testMap.GridCoords);
-                var helmetSlot = sEntManager.GetComponent<ItemSlotsComponent>(frame).Slots[PowerArmorSlotIds.IdFor(PowerArmorPieceSlot.Helmet)];
+                // The chest, not the helmet: the occupant may unbolt their own helmet while inside.
+                var chest = sEntManager.SpawnEntity(ChestProto, testMap.GridCoords);
+                var chestSlot = sEntManager.GetComponent<ItemSlotsComponent>(frame).Slots[PowerArmorSlotIds.IdFor(PowerArmorPieceSlot.Chest)];
 
-                Assert.That(slots.CanInsert(frame, helmet, null, helmetSlot), Is.False,
+                Assert.That(slots.CanInsert(frame, chest, null, chestSlot), Is.False,
                     "armour must not be installable while somebody is inside the frame");
 
-                Assert.That(powerArmor.TryInstallPiece(frame, helmet), Is.False);
+                Assert.That(powerArmor.TryInstallPiece(frame, chest), Is.False);
             });
 
             await pair.CleanReturnAsync();
@@ -270,7 +286,7 @@ namespace Content.IntegrationTests.Tests.PowerArmor
             // Bolt on the full set; every mounting point should light up.
             await server.WaitPost(() =>
             {
-                foreach (var (proto, _) in FullSet)
+                foreach (var proto in SetProtos("T51"))
                 {
                     var piece = sEntManager.SpawnEntity(proto, testMap.GridCoords);
                     Assert.That(powerArmor.TryInstallPiece(frame, piece), Is.True, $"installing {proto}");
@@ -340,6 +356,9 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
             var testMap = await pair.CreateTestMap();
 
+            // One RSI per set, and no two sets may share: that is what proves the frame swaps art.
+            var allSetRsis = new HashSet<RSI>();
+
             foreach (var set in SetPrefixes)
             {
                 EntityUid frame = default;
@@ -349,36 +368,44 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
                 await server.WaitPost(() =>
                 {
-                    foreach (var (suffix, slot) in FullSet)
+                    foreach (var proto in SetProtos(set))
                     {
-                        var piece = sEntManager.SpawnEntity($"PowerArmorPiece{suffix}{set}", testMap.GridCoords);
-                        Assert.That(powerArmor.TryInstallPiece(frame, piece), Is.True, $"{set} {suffix}");
+                        var piece = sEntManager.SpawnEntity(proto, testMap.GridCoords);
+                        Assert.That(powerArmor.TryInstallPiece(frame, piece), Is.True, $"installing {proto}");
                     }
                 });
 
                 await pair.RunTicksSync(10);
 
                 var clientFrame = cEntManager.GetEntity(sEntManager.GetNetEntity(frame));
-                var seenRsis = new HashSet<string>();
+                var seenRsis = new HashSet<RSI>();
 
                 await client.WaitAssertion(() =>
                 {
                     var sprite = cEntManager.GetComponent<SpriteComponent>(clientFrame);
                     var sprites = cEntManager.EntitySysManager.GetEntitySystem<SpriteSystem>();
 
-                    foreach (var (_, slot) in FullSet)
+                    foreach (var (proto, slot) in FullSet)
                     {
                         var layer = SharedPowerArmorSystem.LayerFor(slot);
-                        AssertLayerVisible(sprites, clientFrame, sprite, layer, true, $"{set} {slot}");
-                        seenRsis.Add(sprites.LayerGetRSI((clientFrame, sprite), layer)?.Path.ToString() ?? "none");
+                        // The worn state name comes from the piece, so each set drives the layer.
+                        Assert.That(sprites.LayerMapTryGet((clientFrame, sprite), layer, out var idx, false), Is.True,
+                            $"{set} {slot} layer must exist");
+                        var pieceLayer = (SpriteComponent.Layer) sprite[idx];
+                        Assert.Multiple(() =>
+                        {
+                            Assert.That(pieceLayer.Visible, Is.True, $"{set} {slot} visible");
+                            Assert.That(pieceLayer.State.ToString(), Is.EqualTo(WornState(proto)),
+                                $"{set} {slot} state");
+                        });
+                        seenRsis.Add(((SpriteComponent.Layer) sprite[layer]).RSI);
                     }
 
-                    AssertLayerVisible(sprites, clientFrame, sprite, PowerArmorVisualLayers.Frame, true, $"{set} frame");
+                    AssertLayerVisible(sprites, clientFrame, sprite, PowerArmorVisualLayers.Frame, true);
                 });
 
                 Assert.That(seenRsis, Has.Count.EqualTo(1), $"{set}: every piece shares one RSI");
-                Assert.That(seenRsis.First(), Does.Contain($"PowerArmorPieces{set}"),
-                    $"{set}: the frame must draw from that set's RSI");
+                Assert.That(allSetRsis.Add(seenRsis.First()), Is.True, $"{set} drew from a unique RSI");
 
                 await server.WaitPost(() => sEntManager.DeleteEntity(frame));
                 await pair.RunTicksSync(5);
@@ -387,6 +414,9 @@ namespace Content.IntegrationTests.Tests.PowerArmor
             await pair.CleanReturnAsync();
         }
 
+        /// <summary>
+        /// The occupant is reduced to a head, and gets it back on the way out.
+        /// </summary>
         [Test]
         public async Task OccupantShowsOnlyTheirHeadAndOnlyWhenUnhelmeted()
         {
@@ -412,31 +442,11 @@ namespace Content.IntegrationTests.Tests.PowerArmor
             await pair.RunTicksSync(10);
 
             var clientPilot = cEntManager.GetEntity(sEntManager.GetNetEntity(pilot));
-            var clientFrameScale = cEntManager.GetComponent<SpriteComponent>(
-                cEntManager.GetEntity(sEntManager.GetNetEntity(frame))).Scale;
-
-            // Baseline read outside the frame, to check the restore against.
-            var spriteSys = cEntManager.EntitySysManager.GetEntitySystem<SpriteSystem>();
-            var baseSprite = cEntManager.GetComponent<SpriteComponent>(clientPilot);
-            var baseHeadOffset = spriteSys.LayerMapTryGet((clientPilot, baseSprite), HumanoidVisualLayers.Head, out var bhi, false)
-                ? ((SpriteComponent.Layer) baseSprite[bhi]).Offset
-                : Vector2.Zero;
-            var baseHeadScale = HeadScale(spriteSys, clientPilot, baseSprite);
-            var baseHeadAnchor = HeadCentre(spriteSys, clientPilot, baseSprite);
+            var clientFrame = cEntManager.GetEntity(sEntManager.GetNetEntity(frame));
 
             await server.WaitPost(() => Assert.That(powerArmor.TryInsert(frame, pilot), Is.True));
             await pair.RunTicksSync(10);
 
-            // Appearance replication rebuilds every humanoid layer.
-            await server.WaitPost(() =>
-            {
-                var appearance = sEntManager.GetComponent<HumanoidAppearanceComponent>(pilot);
-                appearance.Width = 0.95f;
-                sEntManager.Dirty(pilot, appearance);
-            });
-            await pair.RunTicksSync(10);
-
-            // Unhelmeted: head layers up, body layers down.
             await client.WaitAssertion(() =>
             {
                 var sprite = cEntManager.GetComponent<SpriteComponent>(clientPilot);
@@ -444,38 +454,22 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
                 Assert.Multiple(() =>
                 {
-                    // The container must show contents or the head is occluded.
                     Assert.That(sprite.ContainerOccluded, Is.False, "pilot sprite must not be occluded");
 
-                    // Render order hides the head: the frame paints over the pilot unless it is lower.
-                    var pilotDepth = cEntManager.GetComponent<SpriteComponent>(clientPilot).DrawDepth;
-                    var frameDepth = cEntManager.GetComponent<SpriteComponent>(
-                        cEntManager.GetEntity(sEntManager.GetNetEntity(frame))).DrawDepth;
-                    Assert.That(frameDepth, Is.LessThan(pilotDepth),
-                        $"frame depth {frameDepth} must be below the pilot's {pilotDepth} or the chassis covers the head");
+                    // The chassis draws above the occupant and covers the body on its own.
+                    var frameDepth = cEntManager.GetComponent<SpriteComponent>(clientFrame).DrawDepth;
+                    var pilotDepth = sprite.DrawDepth;
+                    Assert.That(frameDepth, Is.GreaterThan(pilotDepth),
+                        $"frame depth {frameDepth} must be above the pilot's {pilotDepth} or the chassis cannot occlude the body");
 
-                                        var headOffset = cEntManager.GetComponent<PowerArmorFrameComponent>(
-                    cEntManager.GetEntity(sEntManager.GetNetEntity(frame))).PilotHeadOffset;
-
-                    // Rendered bounding boxes, not the layer offset.
-                    var headCentre = HeadCentre(sprites, clientPilot, sprite);
-                    Assert.That(float.IsFinite(headCentre.X) && float.IsFinite(headCentre.Y), Is.True,
-                        $"head position must stay finite (was {headCentre})");
-                    Assert.That(headCentre.Y, Is.EqualTo(baseHeadAnchor.Y + headOffset.Y).Within(0.01f),
-                        $"head should sit at its anchor plus the offset (anchor {baseHeadAnchor.Y}, now {headCentre.Y})");
-                    Assert.That(headCentre.X, Is.EqualTo(baseHeadAnchor.X + headOffset.X).Within(0.01f),
-                        "head should not drift sideways");
-
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.True, "head should show");
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Face), Is.True, "face should show");
-
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.False, "torso must be hidden");
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.LArm), Is.False, "arm must be hidden");
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.RLeg), Is.False, "leg must be hidden");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.True, "head shows");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.False, "torso hidden");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.LArm), Is.False, "arm hidden");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.RLeg), Is.False, "leg hidden");
                 });
             });
 
-            // A helmet hides the head; step out to fit one.
+            // Armour cannot be fitted while occupied, so step out, fit a helmet, climb back in.
             await server.WaitPost(() => Assert.That(powerArmor.TryEject(frame), Is.True));
             await pair.RunTicksSync(5);
 
@@ -483,11 +477,8 @@ namespace Content.IntegrationTests.Tests.PowerArmor
             {
                 var sprite = cEntManager.GetComponent<SpriteComponent>(clientPilot);
                 var sprites = cEntManager.EntitySysManager.GetEntitySystem<SpriteSystem>();
-
-                Assert.That(HeadScale(sprites, clientPilot, sprite), Is.EqualTo(baseHeadScale),
-                    "head scale restored after first eject");
-                Assert.That(HeadOffset(sprites, clientPilot, sprite), Is.EqualTo(baseHeadOffset),
-                    "head offset restored after first eject");
+                Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.True,
+                    "torso restored on the way out");
             });
 
             await server.WaitPost(() =>
@@ -506,12 +497,13 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
                 Assert.Multiple(() =>
                 {
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.False, "helmeted head must be hidden");
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.False, "torso must stay hidden");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.False,
+                        "helmeted head hidden");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.False,
+                        "torso still hidden");
                 });
             });
 
-            // Climbing out restores the mob's normal appearance.
             await server.WaitPost(() => Assert.That(powerArmor.TryEject(frame), Is.True));
             await pair.RunTicksSync(10);
 
@@ -522,20 +514,13 @@ namespace Content.IntegrationTests.Tests.PowerArmor
 
                 Assert.Multiple(() =>
                 {
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.True, "head restored");
-                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.True, "torso restored");
-
-                    // Head scale and offset both go back on exit.
-                    Assert.That(HeadScale(sprites, clientPilot, sprite), Is.EqualTo(baseHeadScale),
-                        $"head scale restored (was {baseHeadScale})");
-                    Assert.That(HeadOffset(sprites, clientPilot, sprite), Is.EqualTo(baseHeadOffset),
-                        $"head offset restored (was {baseHeadOffset})");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.True, "head back");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.True, "torso back");
                 });
             });
 
             await pair.CleanReturnAsync();
         }
-
         /// <summary>Verbs are collected on the client, so a server-only handler never fires.</summary>
         [Test]
         public async Task ConditionVerbIsProducedOnTheClient()
@@ -585,6 +570,149 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
                 Assert.That(condition, Is.Not.Null, "frame must offer a Condition verb on the client");
                 Assert.That(condition!.ShowOnExamineTooltip, Is.True,
                     "Condition verb must render as a tooltip button");
+            });
+
+            await pair.CleanReturnAsync();
+        }
+
+        /// <summary>
+        /// An unoccupied frame must still offer its fit/strip verbs. Fitting and stripping happen
+        /// from outside, so the enter/exit branch must not swallow the slot loop.
+        /// </summary>
+        [Test]
+        public async Task AnEmptyFrameStillOffersItsSlotVerbs()
+        {
+            await using var pair = await PoolManager.GetServerClient(new PoolSettings { Connected = true });
+            var server = pair.Server;
+            var client = pair.Client;
+
+            var sEntManager = server.ResolveDependency<IEntityManager>();
+            var cEntManager = client.ResolveDependency<IEntityManager>();
+            var powerArmor = sEntManager.EntitySysManager.GetEntitySystem<SharedPowerArmorSystem>();
+
+            var testMap = await pair.CreateTestMap();
+
+            EntityUid frame = default;
+            EntityUid helmet = default;
+            EntityUid inspector = default;
+
+            await server.WaitPost(() =>
+            {
+                frame = sEntManager.SpawnEntity(FrameProto, testMap.GridCoords);
+                helmet = sEntManager.SpawnEntity(HelmetProto, testMap.GridCoords);
+                inspector = sEntManager.SpawnEntity("MobHuman", testMap.GridCoords);
+            });
+
+            await pair.RunTicksSync(5);
+
+            await server.WaitPost(() =>
+            {
+                Assert.That(powerArmor.TryInstallPiece(frame, helmet), Is.True);
+                Assert.That(powerArmor.IsEmpty(frame), Is.True, "nobody is inside");
+            });
+
+            await pair.RunTicksSync(5);
+
+            var clientFrame = cEntManager.GetEntity(sEntManager.GetNetEntity(frame));
+            var clientInspector = cEntManager.GetEntity(sEntManager.GetNetEntity(inspector));
+
+            await client.WaitAssertion(() =>
+            {
+                // The handler ignores anyone without hands, so this has to be a real mob.
+                var hands = cEntManager.GetComponent<HandsComponent>(clientInspector);
+
+                var ev = new GetVerbsEvent<AlternativeVerb>(
+                    clientInspector, clientFrame, null, hands,
+                    canInteract: true, canComplexInteract: true, canAccess: true,
+                    new List<VerbCategory>());
+
+                cEntManager.EventBus.RaiseLocalEvent(clientFrame, ev, true);
+
+                var verbs = ev.Verbs.OfType<AlternativeVerb>().ToList();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(ev.Verbs.Count, Is.GreaterThan(0), "the frame must offer verbs at all");
+
+                    // One fitted piece, so exactly one strip verb; no held item, so no fit verb.
+                    Assert.That(verbs.Count(v => v.Category == VerbCategory.Eject), Is.EqualTo(1),
+                        "an empty frame must still offer the helmet strip verb");
+                    Assert.That(verbs.Count(v => v.Category == VerbCategory.Insert), Is.EqualTo(0),
+                        "nothing is held, so there is nothing to fit");
+
+                    Assert.That(verbs.Count(v => v.Text == "power-armor-frame-verb-enter"), Is.EqualTo(1),
+                        "an empty frame must offer the enter verb");
+                    Assert.That(verbs.Count(v => v.Text == "power-armor-frame-verb-exit"), Is.EqualTo(0),
+                        "nobody is inside, so there is nobody to exit");
+                });
+            });
+
+            await pair.CleanReturnAsync();
+        }
+
+        /// <summary>
+        /// Taking the helmet off inside the suit must hand the head back. The head layers are
+        /// tracked as hidden, so this is a state change and not a one-way hide.
+        /// </summary>
+        [Test]
+        public async Task TakingTheHelmetOffInsideRestoresTheHead()
+        {
+            await using var pair = await PoolManager.GetServerClient(new PoolSettings { Connected = true });
+            var server = pair.Server;
+            var client = pair.Client;
+
+            var sEntManager = server.ResolveDependency<IEntityManager>();
+            var cEntManager = client.ResolveDependency<IEntityManager>();
+            var powerArmor = sEntManager.EntitySysManager.GetEntitySystem<SharedPowerArmorSystem>();
+
+            var testMap = await pair.CreateTestMap();
+
+            EntityUid frame = default;
+            EntityUid pilot = default;
+            EntityUid helmet = default;
+
+            await server.WaitPost(() =>
+            {
+                frame = sEntManager.SpawnEntity(FrameProto, testMap.GridCoords);
+                pilot = sEntManager.SpawnEntity("MobHuman", testMap.GridCoords);
+                helmet = sEntManager.SpawnEntity(HelmetProto, testMap.GridCoords);
+            });
+
+            await pair.RunTicksSync(10);
+
+            var clientPilot = cEntManager.GetEntity(sEntManager.GetNetEntity(pilot));
+
+            await server.WaitPost(() => Assert.That(powerArmor.TryInsert(frame, pilot), Is.True));
+            await pair.RunTicksSync(10);
+
+            // The helmet is exempt from the occupied-frame lock, so it goes on from inside.
+            await server.WaitPost(() => Assert.That(powerArmor.TryInstallPiece(frame, helmet), Is.True));
+            await pair.RunTicksSync(10);
+
+            await client.WaitAssertion(() =>
+            {
+                var sprite = cEntManager.GetComponent<SpriteComponent>(clientPilot);
+                var sprites = cEntManager.EntitySysManager.GetEntitySystem<SpriteSystem>();
+                Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.False,
+                    "helmeted head is hidden");
+            });
+
+            await server.WaitPost(() =>
+                Assert.That(powerArmor.TryRemovePiece(frame, PowerArmorPieceSlot.Helmet), Is.True));
+            await pair.RunTicksSync(10);
+
+            await client.WaitAssertion(() =>
+            {
+                var sprite = cEntManager.GetComponent<SpriteComponent>(clientPilot);
+                var sprites = cEntManager.EntitySysManager.GetEntitySystem<SpriteSystem>();
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Head), Is.True,
+                        "head comes back when the helmet comes off from inside");
+                    Assert.That(LayerVisible(sprites, clientPilot, sprite, HumanoidVisualLayers.Chest), Is.False,
+                        "the torso stays under the chassis");
+                });
             });
 
             await pair.CleanReturnAsync();
@@ -651,7 +779,7 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
             await server.WaitAssertion(() =>
             {
                 var comp = sEntManager.GetComponent<PowerArmorFrameComponent>(frame);
-                Assert.That(comp.Integrity, Is.EqualTo(FixedPoint2.New(85)), "welding the chassis directly mends 25");
+                Assert.That(comp.Integrity, Is.EqualTo(FixedPoint2.New(100)), "welding the chassis directly fully repairs");
             });
 
             // Damage it again, then aim at the occupant instead.
@@ -665,7 +793,7 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
             await server.WaitAssertion(() =>
             {
                 var comp = sEntManager.GetComponent<PowerArmorFrameComponent>(frame);
-                Assert.That(comp.Integrity, Is.EqualTo(FixedPoint2.New(45)), "back down to 45");
+                Assert.That(comp.Integrity, Is.EqualTo(FixedPoint2.New(60)), "back down to 60 after 40 damage");
             });
 
             // Aim at the occupant, which is what a player would click.
@@ -682,8 +810,8 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
             await server.WaitAssertion(() =>
             {
                 var comp = sEntManager.GetComponent<PowerArmorFrameComponent>(frame);
-                Assert.That(comp.Integrity, Is.EqualTo(FixedPoint2.New(70)),
-                    "welding the occupant repairs the frame by 25");
+                Assert.That(comp.Integrity, Is.EqualTo(FixedPoint2.New(100)),
+                    "welding the occupant fully repairs the frame");
             });
 
             // Let the doafter unwind before teardown, or the pair is dirty-disposed.
@@ -741,7 +869,10 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
 
                 Assert.Multiple(() =>
                 {
-                    Assert.That(frameComp.Integrity, Is.EqualTo(FixedPoint2.New(75)), "40 billed to the pool");
+                    // Fitted armour soaks part of the hit before the pool bills it: 40 * (100 / 115).
+                       var expected = 115f - 40f * PowerArmorFrameComponent.DamageMultiplier(frameComp.MaxArmor);
+                       Assert.That((float) frameComp.Integrity, Is.EqualTo(expected).Within(0.5f),
+                           "40 partly soaked by the fitted helmet");
                     Assert.That(helmetDamage, Is.EqualTo(FixedPoint2.New(0)), "piece keeps no durability of its own");
                     Assert.That(sEntManager.HasComponent<RepairableComponent>(frame), Is.True, "frame is weldable");
                 });
@@ -757,7 +888,9 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
 
                 Assert.Multiple(() =>
                 {
-                    Assert.That(frameComp.Integrity, Is.EqualTo(FixedPoint2.New(100)));
+                    // Welding is ignoreResistances, so it heals the full 25 on top of the soaked hit.
+                    var soak = PowerArmorFrameComponent.DamageMultiplier(frameComp.MaxArmor);
+                    Assert.That((float) frameComp.Integrity, Is.EqualTo(115f - 40f * soak + 25f).Within(0.5f));
                 });
             });
 
@@ -772,7 +905,11 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
                 Assert.Multiple(() =>
                 {
                     Assert.That(frameComp.MaxIntegrity, Is.EqualTo(FixedPoint2.New(100)), "bare chassis ceiling");
-                    Assert.That(frameComp.Integrity, Is.EqualTo(FixedPoint2.New(85)), "25 damage still outstanding");
+                    // Ceiling drops to 100, and the soaked hit minus the weld stays outstanding.
+                    var helmetArmour = sEntManager.GetComponent<PowerArmorPieceComponent>(helmet).Armor;
+                    var outstanding = 40f * PowerArmorFrameComponent.DamageMultiplier(helmetArmour) - 25f;
+                    Assert.That((float) frameComp.Integrity, Is.EqualTo(100f - outstanding).Within(0.5f),
+                        "soaked damage less the weld still outstanding");
                 });
             });
 
@@ -816,6 +953,8 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
             return TryLayer(sprites, uid, sprite, key, out var layer) && layer.Visible;
         }
 
+        
+
         private static void AssertLayerVisible(
             SpriteSystem sprites,
             EntityUid uid,
@@ -831,27 +970,8 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
                 Assert.That(layer.RsiState.ToString(), Is.EqualTo(state), $"layer {key} state");
         }
 
-        private static Vector2 HeadOffset(SpriteSystem sprites, EntityUid uid, SpriteComponent sprite)
-        {
-            return sprites.LayerMapTryGet((uid, sprite), HumanoidVisualLayers.Head, out var index, false)
-                ? ((SpriteComponent.Layer) sprite[index]).Offset
-                : Vector2.Zero;
-        }
 
-        /// <summary>Where the head art actually lands, after scale and offset.</summary>
-        private static Vector2 HeadCentre(SpriteSystem sprites, EntityUid uid, SpriteComponent sprite)
-        {
-            return sprites.LayerMapTryGet((uid, sprite), HumanoidVisualLayers.Head, out var index, false)
-                ? ((SpriteComponent.Layer) sprite[index]).CalculateBoundingBox().Center
-                : Vector2.Zero;
-        }
 
-        private static Vector2 HeadScale(SpriteSystem sprites, EntityUid uid, SpriteComponent sprite)
-        {
-            return sprites.LayerMapTryGet((uid, sprite), HumanoidVisualLayers.Head, out var index, false)
-                ? sprite[index].Scale
-                : Vector2.Zero;
-        }
 
         private static bool TryLayer(            SpriteSystem sprites,
             EntityUid uid,

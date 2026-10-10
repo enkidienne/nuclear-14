@@ -9,6 +9,7 @@
   - type: PowerArmorPiece
     # Adds to the frame's durability ceiling; heavier pieces override.
     integrity: 15
+    armor: 15
     modifiers:
       coefficients:
         Blunt: 0.9
@@ -65,6 +66,7 @@
     slot: Chest
     wornStateName: chest
     integrity: 25
+    armor: 25
     # Heavier chestplate soaks more than the limb plating.
     modifiers:
       coefficients:
@@ -183,6 +185,7 @@
     slot: Helmet
     wornStateName: helmet
     integrity: 12
+    armor: 12
     modifiers:
       coefficients:
         Blunt: 0.85
@@ -213,6 +216,7 @@
     slot: Chest
     wornStateName: chest
     integrity: 20
+    armor: 20
     modifiers:
       coefficients:
         Blunt: 0.75
@@ -241,6 +245,7 @@
     slot: LeftArm
     wornStateName: lefthand
     integrity: 12
+    armor: 12
 
 - type: entity
   parent: BasePowerArmorPiece
@@ -263,6 +268,7 @@
     slot: RightArm
     wornStateName: righthand
     integrity: 12
+    armor: 12
 
 - type: entity
   parent: BasePowerArmorPiece
@@ -285,6 +291,7 @@
     slot: LeftLeg
     wornStateName: leftleg
     integrity: 12
+    armor: 12
 
 - type: entity
   parent: BasePowerArmorPiece
@@ -307,6 +314,7 @@
     slot: RightLeg
     wornStateName: rightleg
     integrity: 12
+    armor: 12
 
 # APA: scout frame, least armour of the three.
 
@@ -331,6 +339,7 @@
     slot: Helmet
     wornStateName: helmet
     integrity: 10
+    armor: 10
     modifiers:
       coefficients:
         Blunt: 0.8
@@ -361,6 +370,7 @@
     slot: Chest
     wornStateName: chest
     integrity: 16
+    armor: 16
     modifiers:
       coefficients:
         Blunt: 0.7
@@ -389,6 +399,7 @@
     slot: LeftArm
     wornStateName: lefthand
     integrity: 10
+    armor: 10
 
 - type: entity
   parent: BasePowerArmorPiece
@@ -411,6 +422,7 @@
     slot: RightArm
     wornStateName: righthand
     integrity: 10
+    armor: 10
 
 - type: entity
   parent: BasePowerArmorPiece
@@ -433,6 +445,7 @@
     slot: LeftLeg
     wornStateName: leftleg
     integrity: 10
+    armor: 10
 
 - type: entity
   parent: BasePowerArmorPiece
@@ -455,6 +468,7 @@
     slot: RightLeg
     wornStateName: rightleg
     integrity: 10
+    armor: 10
 
 # Frames
 
@@ -478,14 +492,15 @@
       wornColor: yellow
       wornAt: 0.33
       badColor: red
-    # Head displacement in sprite pixels; negative Y lifts. At 0 the head sits ~2px low.
-    pilotHeadOffset: 0, -3
+    pilotHeadOffset: 0, 0.1875
   - type: ContainerContainer
     containers:
       power-armor-pilot-slot:
         !type:ContainerSlot
         # Show the occupant, else the container occludes their sprite.
         showEnts: true
+      # The frame parks its issued core and harness here between occupants.
+      power-armor-issued-gear: !type:Container
   # Excludes non-power-armour items; slot matching is in SharedPowerArmorSystem.
   - type: ItemSlots
     slots:
@@ -520,7 +535,9 @@
           components:
           - PowerArmorPiece
   - type: Sprite
-    drawdepth: Items
+    # Above Mobs: the chassis then occludes the occupant's body on its own, so the head only
+    # has to poke above the shoulders. No per-layer suppression needed.
+    drawdepth: OverMobs
     scale: 1.25, 1.25
     noRot: true
     layers:
@@ -578,9 +595,6 @@
     fuelCost: 10
     doAfterDelay: 8
     qualityNeeded: Welding
-    damage:
-      types:
-        Blunt: -25
   - type: Destructible
     thresholds:
     - trigger:
@@ -604,3 +618,55 @@
   id: PowerArmorFrame
   name: power armor frame
   description: A battered servo-assisted chassis. Climb in, then bolt the armour on. Any set fits.
+
+# Power core
+
+# Issued to the occupant for as long as they are inside. Inherits the worn suit's core, but the
+# frame already governs movement, and this one carries a small grid instead of a speed penalty.
+- type: entity
+  parent: N14ClothingPowerSystemsBack
+  id: PowerArmorFrameCore
+  name: armor power core
+  description: Bolted into the back of a power armor frame. Provides a little storage.
+  components:
+  - type: Storage
+    maxItemSize: Normal
+    defaultStorageOrientation: Vertical
+    grid:
+    - 0,0,5,2
+  - type: UserInterface
+    interfaces:
+      enum.StorageUiKey.Key:
+        type: StorageBoundUserInterface
+  - type: ContainerContainer
+    containers:
+      storagebase: !type:Container
+        ents: []
+# Stands in for the worn suit while inside. There is no Weapon component in this fork, so the
+# rack whitelists the two that exist. Weapon storage only: no grid, so it is not a spare backpack.
+- type: entity
+  parent: ClothingOuterBase
+  id: PowerArmorFrameArmor
+  name: frame harness
+  description: A spare outer layer issued by the frame. Holds a couple of weapons, nothing else.
+  components:
+  - type: Sprite
+    sprite: _Nuclear14/Clothing/OuterClothing/PowerArmor/t51.rsi
+  - type: Clothing
+    sprite: _Nuclear14/Clothing/OuterClothing/PowerArmor/t51.rsi
+  - type: Item
+    size: Ginormous
+  # The suitstorage slot is gated on the worn outer layer carrying this.
+  - type: AllowSuitStorage
+  - type: ItemSlots
+    slots:
+      weapon-primary:
+        whitelist:
+          components:
+          - Gun
+          - MeleeWeapon
+      weapon-secondary:
+        whitelist:
+          components:
+          - Gun
+          - MeleeWeapon

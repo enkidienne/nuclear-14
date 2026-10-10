@@ -106,7 +106,7 @@ public abstract partial class SharedProjectileSystem : EntitySystem
             return;
         }
 
-        var ev = new ProjectileHitEvent(component.Damage, target, component.Shooter);
+        var ev = new ProjectileHitEvent(component.Damage, target, component.Shooter, uid);
         RaiseLocalEvent(uid, ref ev);
 
         var coordinates = Transform(projectile).Coordinates;
@@ -376,7 +376,7 @@ public record struct ProjectileDeflectAttemptEvent(EntityUid ProjUid, Projectile
 /// Raised when a projectile hits an entity
 /// </summary>
 [ByRefEvent]
-public record struct ProjectileHitEvent(DamageSpecifier Damage, EntityUid Target, EntityUid? Shooter = null);
+public record struct ProjectileHitEvent(DamageSpecifier Damage, EntityUid Target, EntityUid? Shooter = null, EntityUid Projectile = default);
 
 /// <summary>
 /// Raised after a projectile has dealt it's damage.

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Content.Shared.Damage;
+using Content.Shared.DoAfter;
 using Content.Shared.FixedPoint;
 using Content.Shared.Whitelist;
 using Robust.Shared.Containers;
@@ -10,7 +11,7 @@ using Robust.Shared.Serialization;
 
 namespace Content.Shared.PowerArmor;
 
-/// <summary>The mounting points a frame exposes for <see cref="PowerArmorPieceComponent"/> items.</summary>
+/// Mounting points a frame exposes.
 [Serializable, NetSerializable]
 public enum PowerArmorPieceSlot : byte
 {
@@ -22,8 +23,7 @@ public enum PowerArmorPieceSlot : byte
     RightLeg,
 }
 
-/// <summary>Sprite layers a frame declares, mirroring <see cref="PowerArmorPieceSlot"/> plus the chassis.</summary>
-    /// <remarks>Draw order comes from the order the prototype lists them, not from these values.</remarks>
+    /// Draw order comes from the prototype's layer list, not these values.
 [Serializable, NetSerializable]
 public enum PowerArmorVisualLayers : byte
 {
@@ -36,13 +36,14 @@ public enum PowerArmorVisualLayers : byte
     Frame,
 }
 
-/// <summary>Ties <see cref="PowerArmorPieceSlot"/> to the matching <c>ItemSlots</c> key used in YAML.</summary>
+    /// ItemSlots key per slot, as spelled in YAML.
 public static class PowerArmorSlotIds
 {
-    /// <summary>ItemSlots keys, indexed by <see cref="PowerArmorPieceSlot"/>.</summary>
+    /// ItemSlots keys indexed by slot.
     public static readonly string[] Ids = ["helmet", "chest", "leftArm", "rightArm", "leftLeg", "rightLeg"];
 
-    public static IEnumerable<PowerArmorPieceSlot> All => Enum.GetValues<PowerArmorPieceSlot>();
+        // Enum.GetValues clones per call; this is read per verb and per damage tick.
+    public static readonly PowerArmorPieceSlot[] All = Enum.GetValues<PowerArmorPieceSlot>();
 
     public static string IdFor(PowerArmorPieceSlot slot) => Ids[(int) slot];
 
@@ -54,69 +55,100 @@ public static class PowerArmorSlotIds
     }
 }
 
-/// <summary>A pilotable chassis; occupants climb inside and their input is relayed to it.</summary>
+    /// A chassis a player climbs inside; their input is relayed to it.
     [RegisterComponent, NetworkedComponent, AutoGenerateComponentState(true)]
 public sealed partial class PowerArmorFrameComponent : Component
 {
     public const string DefaultPilotSlotId = "power-armor-pilot-slot";
 
-    /// <summary>The occupant of a frame.</summary>
+    /// Issued gear parked between occupants.
+    public const string IssuedGearContainerId = "power-armor-issued-gear";
+
     [ViewVariables]
     public ContainerSlot PilotSlot = default!;
+
+    /// Issued core and harness.
+    [ViewVariables]
+    public Container IssuedGear = default!;
 
     [ViewVariables]
     public readonly string PilotSlotId = DefaultPilotSlotId;
 
-    /// <summary>Seconds taken to climb in.</summary>
+    /// Seconds to climb in.
     [DataField, ViewVariables(VVAccess.ReadWrite)]
     public float EntryDelay = 3f;
 
-    /// <summary>Seconds taken to climb out.</summary>
+    /// Seconds to climb out.
     [DataField, ViewVariables(VVAccess.ReadWrite)]
     public float ExitDelay = 3f;
 
-    /// <summary>Only entities passing this may occupy the frame.</summary>
+    /// Seconds to bolt a piece on.
+    [DataField, ViewVariables(VVAccess.ReadWrite)]
+    public float InstallDelay = 2f;
+
+    /// Seconds to unbolt a piece.
+    [DataField, ViewVariables(VVAccess.ReadWrite)]
+    public float RemoveDelay = 2f;
+
+    /// Entities that may occupy the frame.
     [DataField]
     public EntityWhitelist? PilotWhitelist;
 
-    /// <summary>Fraction of frame damage that carries through to the occupant.</summary>
+    /// Fraction of frame damage that reaches the occupant.
     [DataField]
     public float DamageBleedThrough = 0.15f;
 
-    /// <summary>The single durability pool; armour pieces have none of their own.</summary>
+    /// The single durability pool; armour pieces have none of their own.
     [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
     public FixedPoint2 Integrity;
 
-    /// <summary>Integrity the chassis has on its own, before any armour is bolted on.</summary>
+    /// Chassis integrity before any armour is fitted.
     [DataField]
     public FixedPoint2 BaseIntegrity = 100;
 
-    /// <summary>Ceiling of the pool: <see cref="BaseIntegrity"/> plus every fitted piece's integrity.</summary>
+    /// BaseIntegrity plus every fitted piece's integrity.
     [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
     public FixedPoint2 MaxIntegrity;
 
-    /// <summary>Colour bands for the condition readout, by fraction remaining.</summary>
+    /// Sum of every fitted piece's resistance.
+    [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
+    public FixedPoint2 MaxArmor;
+
+    /// Pooled resistance at which incoming damage is halved.
+    public const int HalfDamageArmour = 100;
+
+    public static float DamageMultiplier(FixedPoint2 armour)
+        => HalfDamageArmour / (HalfDamageArmour + (float) armour);
+
+    /// Condition readout colours by fraction remaining.
     [DataField]
     public PowerArmorConditionScale Condition = new();
 
-    /// <summary>A wrecked frame cannot be entered or accept new pieces.</summary>
+    /// Wrecked: cannot be entered or accept pieces.
     [ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
     public bool Broken;
 
-    /// <summary>Whether a wrecked frame can still be climbed out of.</summary>
+    /// Whether a wreck can still be exited.
     [DataField]
     public bool AllowExitWhenBroken = true;
 
-    /// <summary>Whether pieces may be swapped while occupied. Fallout 4 says no.</summary>
+    /// Fallout 4 says no.
     [DataField]
     public bool AllowModificationWhileOccupied = false;
 
-    /// <summary>How far to move the occupant's head, in sprite pixels. Negative Y lifts.</summary>
+    /// Head lift in world units; the frame scales 1.25 but the head does not.
     [DataField]
     public Vector2 PilotHeadOffset = Vector2.Zero;
+
+    /// Mirrored layer keys; tracked so a hat removed mid-exit still gets cleaned up.
+    [ViewVariables(VVAccess.ReadWrite)]
+    public HashSet<string> MirroredKeys = new();
+
+    /// <summary>Modifier sets of the fitted pieces, rebuilt by RecomputePools. Server-side only.</summary>
+    [ViewVariables(VVAccess.ReadWrite)]
+    public List<DamageModifierSet> FittedModifiers = new();
 }
 
-/// <summary>Colour bands for a durability readout.</summary>
 [DataDefinition]
 public sealed partial class PowerArmorConditionScale
 {
@@ -127,32 +159,50 @@ public sealed partial class PowerArmorConditionScale
     [DataField] public string BadColor = "red";
 }
 
-/// <summary>A helmet, chest, arm or leg piece that bolts onto a <see cref="PowerArmorFrameComponent"/>.</summary>
+    /// A piece that bolts onto a frame.
 [RegisterComponent, NetworkedComponent, AutoGenerateComponentState(true)]
 public sealed partial class PowerArmorPieceComponent : Component
 {
-    /// <summary>Which mounting point this piece belongs in.</summary>
+    /// Mounting point this piece belongs in.
     [DataField, AutoNetworkedField]
     public PowerArmorPieceSlot Slot = PowerArmorPieceSlot.Chest;
 
-    /// <summary>RSI state drawn on the frame while installed.</summary>
+    /// RSI state drawn on the frame while fitted.
     [DataField]
     public string WornStateName = "chest";
 
-    /// <summary>Protection this piece contributes while installed, per damage type.</summary>
+    /// Resistance this piece contributes while fitted.
     [DataField(required: true)]
     public DamageModifierSet Modifiers = default!;
 
-    /// <summary>Adds to the host frame's durability ceiling; not a pool of its own.</summary>
-    [DataField]
+    /// Raises the host frame's ceiling; not a pool of its own.
+    [DataField, AutoNetworkedField]
     public FixedPoint2 Integrity = 15;
+
+    /// Raises the host frame's pooled resistance; independent of Integrity.
+    [DataField, AutoNetworkedField]
+    public FixedPoint2 Armor = 15;
 }
 
-/// <summary>Placed on an entity while it occupies a <see cref="PowerArmorFrameComponent"/>.</summary>
+    /// Present while the entity occupies a frame.
 [RegisterComponent, NetworkedComponent, AutoGenerateComponentState]
 public sealed partial class PowerArmorPilotComponent : Component
 {
-    /// <summary>The frame this entity is inside of.</summary>
     [DataField, ViewVariables(VVAccess.ReadWrite), AutoNetworkedField]
     public EntityUid Frame;
+}
+
+[Serializable, NetSerializable]
+/// The held piece. DoAfterArgs.Target is the frame, so the item has to be carried here
+/// or it is lost by the time the bar finishes.
+public sealed partial class PowerArmorPieceInstallEvent : SimpleDoAfterEvent
+{
+    public PowerArmorPieceSlot Slot;
+    public NetEntity Item;
+}
+
+[Serializable, NetSerializable]
+public sealed partial class PowerArmorPieceRemoveEvent : SimpleDoAfterEvent
+{
+    public PowerArmorPieceSlot Slot;
 }

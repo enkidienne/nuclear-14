@@ -1,4 +1,5 @@
 ﻿using Content.Shared.Interaction;
+using Content.Shared.PowerArmor;
 
 namespace Content.Shared.MouseRotator;
 
@@ -55,6 +56,8 @@ public abstract class SharedMouseRotatorSystem : EntitySystem
 
         if (TryComp<Content.Shared.Mech.Components.MechPilotComponent>(ent, out var pilot))
             ent = pilot.Mech;
+        else if (TryComp<PowerArmorPilotComponent>(ent, out var armorPilot))
+            ent = armorPilot.Frame;
 
         if (!TryComp<MouseRotatorComponent>(ent, out var rotator))
         {

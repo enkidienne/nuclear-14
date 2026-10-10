@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using Content.Server.Repairable;
+using Content.Server._Misfits.Special;
+using Content.Server._Misfits.Weapons;
 using Content.Shared.ActionBlocker;
 using Content.Shared.Damage;
 using Content.Shared.Damage.Components;
@@ -7,92 +9,143 @@ using Content.Shared.Destructible;
 using Content.Shared.DoAfter;
 using Content.Shared.DragDrop;
 using Content.Shared.FixedPoint;
+using Content.Shared.Hands.EntitySystems;
+using Content.Shared.Inventory;
 using Content.Shared.Popups;
 using Content.Shared.Movement.Events;
 using Content.Shared.PowerArmor;
+using Content.Shared.Projectiles;
 using Content.Shared.Verbs;
 using Content.Shared.Whitelist;
 using Robust.Shared.Containers;
 using Robust.Shared.Localization;
+using Robust.Shared.Network;
 using Robust.Shared.Utility;
 
 namespace Content.Server.PowerArmor;
 
-/// Enter/exit verbs, drag-drop entry, integrity and damage bleed-through.
+    /// Entry, drag-drop, integrity and damage bleed-through.
 public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
 {
+    [Dependency] private DamageableSystem _damageable = default!;
+    [Dependency] private INetManager _net = default!;
 
-    [Dependency] private readonly ActionBlockerSystem _actionBlocker = default!;
-    [Dependency] private readonly DamageableSystem _damageable = default!;
-    [Dependency] private readonly EntityWhitelistSystem _whitelist = default!;
-    [Dependency] private readonly SharedDoAfterSystem _doAfter = default!;
-    [Dependency] private readonly SharedPopupSystem _popup = default!;
+    /// Gear handed to the occupant, and their slots.
+    public const string CoreProto = "PowerArmorFrameCore";
+    public const string ArmorProto = "PowerArmorFrameArmor";
+    private const string CoreSlot = "back";
+    private const string ArmorSlot = "outerClothing";
 
     public override void Initialize()
     {
         base.Initialize();
 
-        SubscribeLocalEvent<PowerArmorFrameComponent, GetVerbsEvent<AlternativeVerb>>(OnGetVerbs);
+        // Verbs live in the shared system; a divergent list flickers the icons.
         SubscribeLocalEvent<PowerArmorFrameComponent, PowerArmorEntryEvent>(OnEntryFinished);
         SubscribeLocalEvent<PowerArmorFrameComponent, PowerArmorExitEvent>(OnExitFinished);
+        SubscribeLocalEvent<PowerArmorFrameComponent, PowerArmorPieceInstallEvent>(OnPieceInstalled);
+        SubscribeLocalEvent<PowerArmorFrameComponent, PowerArmorPieceRemoveEvent>(OnPieceRemoved);
         SubscribeLocalEvent<PowerArmorFrameComponent, DragDropTargetEvent>(OnDragDrop);
         SubscribeLocalEvent<PowerArmorFrameComponent, CanDropTargetEvent>(OnCanDragDrop);
         SubscribeLocalEvent<PowerArmorFrameComponent, DamageChangedEvent>(OnDamageChanged);
         SubscribeLocalEvent<PowerArmorPieceComponent, BeforeDamageChangedEvent>(OnPieceDamageBefore);
+        SubscribeLocalEvent<PowerArmorFrameComponent, BeforeDamageChangedEvent>(OnFrameDamageBefore);
+    SubscribeLocalEvent<PowerArmorFrameComponent, DamageModifyEvent>(OnFrameDamageModify);
        SubscribeLocalEvent<PowerArmorFrameComponent, EntInsertedIntoContainerMessage>(OnPieceFitted);
         SubscribeLocalEvent<PowerArmorFrameComponent, EntRemovedFromContainerMessage>(OnPieceRemoved);
         SubscribeLocalEvent<PowerArmorFrameComponent, DestructionEventArgs>(OnDestruction);
         SubscribeLocalEvent<PowerArmorFrameComponent, UpdateCanMoveEvent>(OnCanMove);
+        // Not ComponentStartup: EnsureComp fires it before SetupPilot sets Frame.
+        SubscribeLocalEvent<PowerArmorPilotComponent, EntGotInsertedIntoContainerMessage>(OnPilotInserted);
+        SubscribeLocalEvent<PowerArmorPilotComponent, ComponentShutdown>(OnPilotShutdown);
+
+        // Runs last so it sees the final, falloff/luck-adjusted damage.
+        SubscribeLocalEvent<ProjectileHitEvent>(OnTrueDamageHit,
+            after: new[] { typeof(BallisticDamageFalloffSystem), typeof(SpecialCombatSystem) });
     }
 
-    private void OnGetVerbs(EntityUid uid, PowerArmorFrameComponent component, GetVerbsEvent<AlternativeVerb> args)
+    /// Issues the core and harness, reusing the last occupant's.
+    private void OnPilotInserted(EntityUid uid, PowerArmorPilotComponent component, EntGotInsertedIntoContainerMessage args)
     {
-        if (!args.CanAccess)
+        if (!_net.IsServer || !TryComp<PowerArmorFrameComponent>(component.Frame, out var frame))
             return;
 
-        if (IsEmpty(uid, component))
-        {
-            if (!CanInsert(uid, args.User, component))
-            {
-                if (component.Broken)
-                    _popup.PopupEntity(Loc.GetString("power-armor-frame-broken"), args.User);
-                return;
-            }
+        // Return unused: the gear parks back on the frame in OnPilotShutdown.
+        EnsureIssued(uid, frame, CoreProto, CoreSlot);
+        EnsureIssued(uid, frame, ArmorProto, ArmorSlot);
 
-            args.Verbs.Add(new AlternativeVerb
-            {
-                Text = "power-armor-frame-verb-enter",
-                Act = () =>
-                {
-                    var doAfter = new DoAfterArgs(EntityManager, args.User, component.EntryDelay, new PowerArmorEntryEvent(), uid, target: uid)
-                    {
-                        BreakOnMove = true,
-                    };
-                    _doAfter.TryStartDoAfter(doAfter);
-                },
-            });
+        Dirty(uid, component);
+    }
+
+    /// Reuses the parked item if there is one.
+    private EntityUid EnsureIssued(EntityUid uid, PowerArmorFrameComponent frame, string proto, string slot)
+    {
+        foreach (var item in frame.IssuedGear.ContainedEntities.ToArray())
+        {
+            if (CompOrNull<MetaDataComponent>(item)?.EntityPrototype?.ID != proto)
+                continue;
+
+            _container.Remove(item, frame.IssuedGear);
+
+            if (_inventory.TryEquip(uid, item, slot, silent: true, force: true))
+                return item;
+
+            _container.Insert(item, frame.IssuedGear);
+        }
+
+        // force: skips CanEquip, refused by the frame's own slot lock.
+        var fresh = Spawn(proto, Transform(uid).Coordinates);
+
+        if (!_inventory.TryEquip(uid, fresh, slot, silent: true, force: true))
+        {
+            QueueDel(fresh);
+            return default;
+        }
+
+        return fresh;
+    }
+
+    /// Parks the issued gear, contents and all.
+    private void OnPilotShutdown(EntityUid uid, PowerArmorPilotComponent component, ComponentShutdown args)
+    {
+        if (!TryComp<PowerArmorFrameComponent>(component.Frame, out var frame))
+            return;
+
+        Stash(uid, frame, CoreSlot);
+        Stash(uid, frame, ArmorSlot);
+    }
+
+    private void Stash(EntityUid uid, PowerArmorFrameComponent frame, string slot)
+    {
+        if (!_inventory.TryGetSlotEntity(uid, slot, out var item) || item == default)
+            return;
+
+        // force: bypasses the slot lock that otherwise keeps these on while piloting.
+        _inventory.TryUnequip(uid, slot, silent: true, force: true);
+        _container.Insert(item.Value, frame.IssuedGear);
+    }
+
+    /// True damage bypasses the pool; the wearer eats the full hit.
+    /// Broadcast: SpecialCombatSystem owns the directed ProjectileComponent pair.
+    private void OnTrueDamageHit(ref ProjectileHitEvent args)
+    {
+        if (args.Projectile == EntityUid.Invalid
+            || !TryComp<ProjectileComponent>(args.Projectile, out var projectile)
+            || !projectile.IgnoreResistances
+            || !TryComp<PowerArmorFrameComponent>(args.Target, out var frame))
+        {
             return;
         }
 
-        var self = args.User == uid || args.User == component.PilotSlot.ContainedEntity;
+        var trueDamage = args.Damage;
 
-        args.Verbs.Add(new AlternativeVerb
-        {
-            Text = "power-armor-frame-verb-exit",
-            Priority = 1,
-            Act = () =>
-            {
-                // Exiting yourself is instant; dragging someone else out is not.
-                if (self)
-                {
-                    TryEject(uid, component);
-                    return;
-                }
+        // An empty specifier bails TryChangeDamage before DamageChanged, so the pool is untouched.
+        args.Damage = new DamageSpecifier();
 
-                var doAfter = new DoAfterArgs(EntityManager, args.User, component.ExitDelay, new PowerArmorExitEvent(), uid, target: uid);
-                _doAfter.TryStartDoAfter(doAfter);
-            },
-        });
+        if (frame.PilotSlot?.ContainedEntity is not { } pilot)
+            return;
+
+        _damageable.TryChangeDamage(pilot, trueDamage, ignoreResistances: true, origin: projectile.Shooter);
     }
 
     private void OnEntryFinished(EntityUid uid, PowerArmorFrameComponent component, PowerArmorEntryEvent args)
@@ -100,9 +153,21 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         if (args.Cancelled || args.Handled)
             return;
 
+        if (component.Broken)
+        {
+            _popup.PopupEntity(Loc.GetString("power-armor-frame-broken"), args.Args.User);
+            return;
+        }
+
         if (_whitelist.IsWhitelistFail(component.PilotWhitelist, args.Args.User))
         {
             _popup.PopupEntity(Loc.GetString("power-armor-frame-cannot-pilot"), args.Args.User);
+            return;
+        }
+
+        if (IsTooBulky(args.Args.User))
+        {
+            _popup.PopupEntity(Loc.GetString("power-armor-frame-too-bulky"), args.Args.User);
             return;
         }
 
@@ -115,7 +180,38 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         if (args.Cancelled || args.Handled)
             return;
 
-        TryEject(uid, component);
+        // The verb hides it from non-pilots; never trust that alone.
+        if (args.Args.User == component.PilotSlot?.ContainedEntity)
+            TryEject(uid, component);
+
+        args.Handled = true;
+    }
+
+    private void OnPieceInstalled(EntityUid uid, PowerArmorFrameComponent component, PowerArmorPieceInstallEvent args)
+    {
+        if (args.Cancelled || args.Handled)
+            return;
+
+        var item = GetEntity(args.Item);
+        if (args.Args.User is { } user && GetPiece(uid, args.Slot) == null
+            && TryComp<PowerArmorPieceComponent>(item, out var piece)
+            && piece.Slot == args.Slot)
+        {
+            TryInstallPiece(uid, item, user);
+        }
+
+        args.Handled = true;
+    }
+
+    private void OnPieceRemoved(EntityUid uid, PowerArmorFrameComponent component, PowerArmorPieceRemoveEvent args)
+    {
+        if (args.Cancelled || args.Handled)
+            return;
+
+        // Ejects straight to the user's hands, or to the floor if they cannot take it.
+        if (GetPiece(uid, args.Slot) != null && args.Args.User is { } user)
+            TryRemovePiece(uid, args.Slot, user);
+
         args.Handled = true;
     }
 
@@ -139,7 +235,7 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         args.CanDrop |= !component.Broken && CanInsert(uid, args.Dragged, component);
     }
 
-    /// A piece has no durability of its own: a hit on fitted armour is billed to the frame.
+    /// Fitted armour has no pool of its own; the hit is billed to the frame.
     private void OnPieceDamageBefore(EntityUid uid, PowerArmorPieceComponent component, ref BeforeDamageChangedEvent args)
     {
         if (!TryGetHostFrame(uid, out var frame))
@@ -149,7 +245,24 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         _damageable.TryChangeDamage(frame, args.Damage);
     }
 
-    /// Keeps the pool in step with the frame's accumulated damage.
+    // BeforeDamageChanged, not a bail-out in OnFrameDamageModify: that would still bill the hit.
+    private void OnFrameDamageBefore(EntityUid uid, PowerArmorFrameComponent component, ref BeforeDamageChangedEvent args)
+    {
+        if (component.PilotSlot?.ContainedEntity is { } shooter && args.Origin == shooter)
+            args.Cancelled = true;
+    }
+
+    /// Must be DamageModifyEvent: BeforeDamageChangedEvent.Damage is write-only.
+    /// Blasts pass ignoreResistances and skip this entirely.
+    private void OnFrameDamageModify(EntityUid uid, PowerArmorFrameComponent component, DamageModifyEvent args)
+    {
+        // A wreck protects nothing, and repair must heal in full.
+        if (component.Broken || component.MaxArmor <= 0 || !args.Damage.AnyPositive())
+            return;
+
+        args.Damage *= PowerArmorFrameComponent.DamageMultiplier(component.MaxArmor);
+    }
+
     private void OnDamageChanged(EntityUid uid, PowerArmorFrameComponent component, DamageChangedEvent args)
     {
         SetIntegrity(uid, component.MaxIntegrity - args.Damageable.TotalDamage, component);
@@ -160,27 +273,22 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         if (component.PilotSlot.ContainedEntity is not { } pilot)
             return;
 
-        var through = DamageSpecifier.ApplyModifierSets(args.DamageDelta, InstalledModifiers(uid)) * component.DamageBleedThrough;
+        var through = component.Broken
+            ? args.DamageDelta
+            : DamageSpecifier.ApplyModifierSets(args.DamageDelta, InstalledModifiers(uid)) * component.DamageBleedThrough;
+
         _damageable.TryChangeDamage(pilot, through);
     }
 
-    /// Protection contributed by the currently installed armour.
     private IEnumerable<DamageModifierSet> InstalledModifiers(EntityUid uid)
-    {
-        foreach (var slot in PowerArmorSlotIds.All)
-        {
-            if (GetPiece(uid, slot) is { } piece
-                && TryComp<PowerArmorPieceComponent>(piece, out var pieceComp))
-            {
-                yield return pieceComp.Modifiers;
-            }
-        }
-    }
+        => uid == EntityUid.Invalid ? [] : CompOrNull<PowerArmorFrameComponent>(uid)?.FittedModifiers ?? [];
 
-    /// Recomputes the pool ceiling: base chassis plus whatever is bolted on right now.
-    private void RecomputeMaxIntegrity(EntityUid uid, PowerArmorFrameComponent component)
+    /// Ceiling and resistance: base chassis plus whatever is bolted on.
+    private void RecomputePools(EntityUid uid, PowerArmorFrameComponent component)
     {
         var max = component.BaseIntegrity;
+        var armour = FixedPoint2.Zero;
+        component.FittedModifiers.Clear();
 
         foreach (var slot in PowerArmorSlotIds.All)
         {
@@ -188,7 +296,15 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
                 && TryComp<PowerArmorPieceComponent>(piece, out var pieceComp))
             {
                 max += pieceComp.Integrity;
+                armour += pieceComp.Armor;
+                component.FittedModifiers.Add(pieceComp.Modifiers);
             }
+        }
+
+        if (armour != component.MaxArmor)
+        {
+            component.MaxArmor = armour;
+            Dirty(uid, component);
         }
 
         if (max == component.MaxIntegrity)
@@ -196,19 +312,25 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
 
         component.MaxIntegrity = max;
 
-        // Hold Integrity == MaxIntegrity - TotalDamage, so welding cannot drift.
+        // Holds Integrity == MaxIntegrity - TotalDamage so welding cannot drift.
         var totalDamage = CompOrNull<DamageableComponent>(uid)?.TotalDamage ?? FixedPoint2.Zero;
         SetIntegrity(uid, max - totalDamage, component);
     }
 
     private void OnPieceFitted(EntityUid uid, PowerArmorFrameComponent component, EntInsertedIntoContainerMessage args)
-        => RecomputeMaxIntegrity(uid, component);
+    {
+        RecomputePools(uid, component);
+        // Also fires for the pilot slot, which decides a wreck's collision layer.
+        ApplyWreckCollision((uid, component));
+    }
 
     private void OnPieceRemoved(EntityUid uid, PowerArmorFrameComponent component, EntRemovedFromContainerMessage args)
-        => RecomputeMaxIntegrity(uid, component);
+    {
+        RecomputePools(uid, component);
+        ApplyWreckCollision((uid, component));
+    }
 
-    /// Writes the pool and checks the break threshold.
-    /// Clamped to MaxIntegrity: welding's negative damage can overshoot the subtraction.
+    /// Clamped: welding's negative damage overshoots the subtraction.
     private void SetIntegrity(EntityUid uid, FixedPoint2 integrity, PowerArmorFrameComponent component)
     {
         integrity = FixedPoint2.Clamp(integrity, 0, component.MaxIntegrity);
@@ -218,6 +340,16 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
 
         component.Integrity = integrity;
         Dirty(uid, component);
+
+        // Welding a wreck back over the break threshold restores it to prime.
+        if (component.Integrity > FixedPoint2.Zero && component.Broken)
+        {
+            component.Broken = false;
+            Dirty(uid, component);
+            ApplyWreckCollision((uid, component));
+            _actionBlocker.UpdateCanMove(uid);
+            return;
+        }
 
         if (component.Integrity > FixedPoint2.Zero || component.Broken)
             return;
@@ -231,10 +363,14 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         component.Integrity = FixedPoint2.Zero;
         Dirty(uid, component);
 
+        // Empty wreck is transparent to fire; occupied still stops shots so the wearer takes them.
+        ApplyWreckCollision((uid, component));
+
         // Re-evaluate movement, or it keeps rolling on stale state.
         _actionBlocker.UpdateCanMove(uid);
 
-       if (component.PilotSlot.ContainedEntity is { } pilot && TryEject(uid, component, pilot))
+        // The occupant stays put: a dead frame still shields them, and they can climb out.
+        if (component.PilotSlot.ContainedEntity is { } pilot)
             _popup.PopupEntity(Loc.GetString("power-armor-frame-broken-eject"), pilot);
     }
 
@@ -243,7 +379,6 @@ public sealed partial class PowerArmorSystem : SharedPowerArmorSystem
         Break(uid, component);
     }
 
-    /// <summary>A wrecked frame has no power and refuses to budge.</summary>
     private void OnCanMove(EntityUid uid, PowerArmorFrameComponent component, UpdateCanMoveEvent args)
     {
         if (component.Broken)

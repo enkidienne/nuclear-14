@@ -1,4 +1,5 @@
 ﻿using Content.Shared.MouseRotator;
+using Content.Shared.PowerArmor;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.Player;
@@ -33,6 +34,8 @@ public sealed class MouseRotatorSystem : SharedMouseRotatorSystem
         var rotationEntity = player.Value;
         if (TryComp<Content.Shared.Mech.Components.MechPilotComponent>(rotationEntity, out var pilot))
             rotationEntity = pilot.Mech;
+        else if (TryComp<PowerArmorPilotComponent>(rotationEntity, out var armorPilot))
+            rotationEntity = armorPilot.Frame;
 
         if (!TryComp<MouseRotatorComponent>(rotationEntity, out var rotator))
             return;

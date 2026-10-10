@@ -7,6 +7,7 @@ power-armor-frame-verb-exit = Climb out
 
 power-armor-frame-broken = The frame is wrecked. It will not power up.
 power-armor-frame-cannot-pilot = You are not trained to operate that frame.
+power-armor-frame-too-bulky = You are carrying too much bulk to fit in there.
 power-armor-frame-broken-eject = Your frame is destroyed! You are thrown clear!
 
 power-armor-slot-helmet = Helmet
@@ -20,3 +21,9 @@ power-armor-durability-verb-text = Condition
 power-armor-durability-verb-message = Check how badly this is worn.
 power-armor-durability-examine = Condition: [color={$color}]{$current} / {$max}[/color]
 power-armor-durability-broken = Wrecked. It needs a lot more than welding.
+
+power-armor-fitted-verb-text = Fitted parts
+power-armor-fitted-verb-message = See what the bolted-on parts add up to.
+power-armor-fitted-part = {$name}: [color=#dcdcdc]+{$integrity} integrity, {$armor} resistance[/color]
+power-armor-fitted-total = [color=#a8a8a8]Total: +{$integrity} integrity, {$armor} less damage.[/color]
+power-armor-fitted-none = Nothing is bolted on.

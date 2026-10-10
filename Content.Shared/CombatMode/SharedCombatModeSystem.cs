@@ -3,6 +3,7 @@ using Content.Shared.Mech.Components;
 using Content.Shared.MouseRotator;
 using Content.Shared.Movement.Components;
 using Content.Shared.Popups;
+using Content.Shared.PowerArmor;
 using Robust.Shared.Network;
 using Robust.Shared.Timing;
 
@@ -93,6 +94,8 @@ public abstract class SharedCombatModeSystem : EntitySystem
     {
         if (TryComp<MechPilotComponent>(uid, out var pilot))
             uid = pilot.Mech;
+        else if (TryComp<PowerArmorPilotComponent>(uid, out var armorPilot))
+            uid = armorPilot.Frame;
 
         if (value)
         {
