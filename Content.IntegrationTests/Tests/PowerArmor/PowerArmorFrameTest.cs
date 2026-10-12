@@ -718,6 +718,76 @@ await using var pair = await PoolManager.GetServerClient(new PoolSettings { Conn
             await pair.CleanReturnAsync();
         }
 
+        /// <summary>The pre-fitted frames must arrive with every piece seated and pools already summed.</summary>
+        [Test]
+        [TestCase("PowerArmorFrameT51")]
+        [TestCase("PowerArmorFrameT45")]
+        [TestCase("PowerArmorFrameAPA")]
+        public async Task PreFittedFramesArriveLoaded(string proto)
+        {
+            await using var pair = await PoolManager.GetServerClient(new PoolSettings { Connected = true });
+            var server = pair.Server;
+            var client = pair.Client;
+
+            var sEntManager = server.ResolveDependency<IEntityManager>();
+            var powerArmor = sEntManager.EntitySysManager.GetEntitySystem<SharedPowerArmorSystem>();
+
+            var testMap = await pair.CreateTestMap();
+
+            EntityUid frame = default;
+            EntityUid inspector = default;
+            await server.WaitPost(() =>
+            {
+                frame = sEntManager.SpawnEntity(proto, testMap.GridCoords);
+                inspector = sEntManager.SpawnEntity("MobHuman", testMap.GridCoords);
+            });
+            await pair.RunTicksSync(5);
+
+            var cEntManager = client.ResolveDependency<IEntityManager>();
+            var clientFrame = cEntManager.GetEntity(sEntManager.GetNetEntity(frame));
+            var clientInspector = cEntManager.GetEntity(sEntManager.GetNetEntity(inspector));
+
+            await client.WaitAssertion(() =>
+            {
+                var hands = cEntManager.GetComponent<HandsComponent>(clientInspector);
+                var ev = new GetVerbsEvent<AlternativeVerb>(
+                    clientFrame, clientFrame, null, hands,
+                    canInteract: true, canComplexInteract: true, canAccess: true,
+                    new List<VerbCategory>());
+                cEntManager.EventBus.RaiseLocalEvent(clientFrame, ev, true);
+
+                var all = ev.Verbs.OfType<AlternativeVerb>().ToList();
+                var eject = all.Where(v => v.Category == VerbCategory.Eject).ToList();
+
+                // ItemSlots adds its own instant eject verbs; ours must replace them, not sit
+                // alongside them, or every slot shows up twice in the menu.
+                Assert.That(eject.Count, Is.EqualTo(PowerArmorSlotIds.All.Length),
+                    $"{proto}: expected one eject verb per fitted piece, got " +
+                    $"[{string.Join(" | ", eject.Select(v => v.Text))}]");
+            });
+
+            await server.WaitAssertion(() =>
+            {
+                var comp = sEntManager.GetComponent<PowerArmorFrameComponent>(frame);
+
+                Assert.Multiple(() =>
+                {
+                    foreach (var slot in PowerArmorSlotIds.All)
+                    {
+                        Assert.That(powerArmor.GetPiece(frame, slot), Is.Not.Null, $"{proto} must arrive with {slot} fitted");
+                    }
+
+                    // RecomputePools has to have run off the starting inserts, or the frame would
+                    // still be sitting at the bare chassis ceiling.
+                    Assert.That(comp.MaxIntegrity, Is.GreaterThan(comp.BaseIntegrity),
+                        $"{proto} pool ceiling should include its fitted pieces");
+                    Assert.That(comp.MaxArmor, Is.GreaterThan(FixedPoint2.Zero), $"{proto} should contribute resistance");
+                });
+            });
+
+            await pair.CleanReturnAsync();
+        }
+
         /// <summary>InteractUsingEvent is not container-relayed, so the occupant must forward it to the frame.</summary>
         [Test]
         public async Task WeldingTheOccupantRepairsTheFrame()

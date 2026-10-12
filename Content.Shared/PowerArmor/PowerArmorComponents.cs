@@ -138,7 +138,8 @@ public sealed partial class PowerArmorFrameComponent : Component
 
     /// Head lift in world units; the frame scales 1.25 but the head does not.
     [DataField]
-    public Vector2 PilotHeadOffset = Vector2.Zero;
+public Vector2 PilotHeadOffset = Vector2.Zero;
+
 
     /// Mirrored layer keys; tracked so a hat removed mid-exit still gets cleaned up.
     [ViewVariables(VVAccess.ReadWrite)]

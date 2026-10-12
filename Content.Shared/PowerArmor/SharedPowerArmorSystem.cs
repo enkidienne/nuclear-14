@@ -446,9 +446,10 @@ public abstract partial class SharedPowerArmorSystem : EntitySystem
         if (args.Hands == null || !args.CanInteract || !args.CanAccess)
             return;
 
-        // Drop ItemSlots' instant verbs before adding the slow ones.
-        args.Verbs.RemoveWhere(v => (v.Category == VerbCategory.Insert || v.Category == VerbCategory.Eject)
-            && IsSlotVerbText(v.Text));
+        // Drop ItemSlots' instant verbs before adding the slow ones. Matched on the frame's own slot
+        // names rather than our SlotLocId, so the two can never drift apart and leave a duplicate
+        // instant verb sitting next to the delayed one.
+        PruneItemSlotVerbs(uid, args);
 
         if (IsEmpty(uid, component))
         {
@@ -550,22 +551,23 @@ public abstract partial class SharedPowerArmorSystem : EntitySystem
     }
 
 
-    private static HashSet<string>? _slotVerbTexts;
-
-    private bool IsSlotVerbText(string text)
-    {
-        // Built once; was six Loc lookups per verb.
-        _slotVerbTexts ??= BuildSlotVerbTexts();
-        return _slotVerbTexts.Contains(text);
-    }
-
-    private HashSet<string> BuildSlotVerbTexts()
+    private void PruneItemSlotVerbs(EntityUid uid, GetVerbsEvent<AlternativeVerb> args)
     {
         var texts = new HashSet<string>();
+
         foreach (var slot in PowerArmorSlotIds.All)
+        {
             texts.Add(Loc.GetString(SlotLocId(slot)));
 
-        return texts;
+            // ItemSlots labels an eject verb with the held item's name rather than the slot's, so
+            // matching slot names alone leaves its instant verb sitting beside the delayed one.
+            // ItemSlotsComponent.Slots is Execute-access only, hence going through GetPiece.
+            if (GetPiece(uid, slot) is { } held && TryComp(held, out MetaDataComponent? meta))
+                texts.Add(meta.EntityName);
+        }
+
+        args.Verbs.RemoveWhere(v => (v.Category == VerbCategory.Insert || v.Category == VerbCategory.Eject)
+            && texts.Contains(v.Text));
     }
 
     private FormattedMessage DurabilityMessage(

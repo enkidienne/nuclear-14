@@ -492,7 +492,7 @@
       wornColor: yellow
       wornAt: 0.33
       badColor: red
-    pilotHeadOffset: 0, 0.1875
+    pilotHeadOffset: 0, 0.15625
   - type: ContainerContainer
     containers:
       power-armor-pilot-slot:
@@ -618,6 +618,72 @@
   id: PowerArmorFrame
   name: power armor frame
   description: A battered servo-assisted chassis. Climb in, then bolt the armour on. Any set fits.
+
+# Pre-fitted frames: the chassis with its full set already bolted on, spawned via ItemSlots
+# startingItem. The pieces are ordinary PowerArmorPiece entities, so they can still be stripped
+# and re-fitted like anything else.
+- type: entity
+  parent: PowerArmorFrame
+  id: PowerArmorFrameT51
+  name: T51 power armor frame
+  description: A servo-assisted chassis with a full T51 set already fitted.
+  components:
+  - type: ItemSlots
+    slots:
+      helmet:
+        startingItem: PowerArmorPieceHelmetT51
+      chest:
+        startingItem: PowerArmorPieceChestT51
+      leftArm:
+        startingItem: PowerArmorPieceLeftArmT51
+      rightArm:
+        startingItem: PowerArmorPieceRightArmT51
+      leftLeg:
+        startingItem: PowerArmorPieceLeftLegT51
+      rightLeg:
+        startingItem: PowerArmorPieceRightLegT51
+
+- type: entity
+  parent: PowerArmorFrame
+  id: PowerArmorFrameT45
+  name: T45 power armor frame
+  description: A servo-assisted chassis with a full T45 set already fitted.
+  components:
+  - type: ItemSlots
+    slots:
+      helmet:
+        startingItem: PowerArmorPieceHelmetT45
+      chest:
+        startingItem: PowerArmorPieceChestT45
+      leftArm:
+        startingItem: PowerArmorPieceLeftArmT45
+      rightArm:
+        startingItem: PowerArmorPieceRightArmT45
+      leftLeg:
+        startingItem: PowerArmorPieceLeftLegT45
+      rightLeg:
+        startingItem: PowerArmorPieceRightLegT45
+
+- type: entity
+  parent: PowerArmorFrame
+  id: PowerArmorFrameAPA
+  name: APA power armor frame
+  description: A servo-assisted chassis with a full APA set already fitted.
+  components:
+  - type: ItemSlots
+    slots:
+      helmet:
+        startingItem: PowerArmorPieceHelmetAPA
+      chest:
+        startingItem: PowerArmorPieceChestAPA
+      leftArm:
+        startingItem: PowerArmorPieceLeftArmAPA
+      rightArm:
+        startingItem: PowerArmorPieceRightArmAPA
+      leftLeg:
+        startingItem: PowerArmorPieceLeftLegAPA
+      rightLeg:
+        startingItem: PowerArmorPieceRightLegAPA
 
 # Power core
 

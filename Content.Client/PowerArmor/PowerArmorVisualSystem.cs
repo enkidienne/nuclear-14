@@ -3,6 +3,8 @@ using System.Linq;
 using System.Numerics;
 using Content.Client.Inventory;
 using Content.Shared.Containers.ItemSlots;
+using Content.Shared.Hands;
+using Content.Shared.Hands.Components;
 using Content.Shared.Humanoid;
 using Content.Shared.Humanoid.Markings;
 using Content.Shared.Item;
@@ -12,6 +14,7 @@ using Robust.Client.Graphics;
 using Robust.Shared.Containers;
 using Robust.Shared.IoC;
 using Robust.Shared.Prototypes;
+using Robust.Shared.Timing;
 using Robust.Shared.Utility;
 using static Robust.Client.GameObjects.SpriteComponent;
 
@@ -100,7 +103,6 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
     private static readonly Color WreckedColor = new(0.72f, 0.70f, 0.68f);
 
     [Dependency] private SpriteSystem _sprite = default!;
-    [Dependency] private SharedHumanoidAppearanceSystem _humanoidAppearance = default!;
     [Dependency] private MarkingManager _markingManager = default!;
 
     public override void Initialize()
@@ -214,13 +216,14 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
         if (!TryComp<SpriteComponent>(pilotUid, out var pilotSprite))
             return;
 
+        // Direct writes, not SetLayersVisibility: that re-runs ApplyMarking for every head
+        // marking, which rebuilds those layers and made the head bounce on movement.
+        SetLayerVisible(pilotUid, pilotSprite, BodyLayers, visible: false);
+
+        // Both directions: taking the helmet off inside the suit has to hand the head back.
+        SetLayerVisible(pilotUid, pilotSprite, HeadLayers, visible: !helmeted);
+
         TryComp<HumanoidAppearanceComponent>(pilotUid, out var humanoid);
-
-        // Via the appearance system: tracks HiddenLayers, so exit cannot undo a severed limb.
-        _humanoidAppearance.SetLayersVisibility(pilotUid, BodyLayers, false, humanoid: humanoid);
-
-        // Set both ways, so taking the helmet off inside gives the head back.
-        _humanoidAppearance.SetLayersVisibility(pilotUid, HeadLayers, !helmeted, humanoid: humanoid);
 
         SetMarkingLayers(pilotUid, pilotSprite, humanoid, UndergarmentCategories, visible: false);
 
@@ -248,10 +251,14 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
 
     /// So a hat put on inside shows up straight away.
     private void OnPilotAppearanceChanged(EntityUid uid, PowerArmorPilotComponent component, ref AppearanceChangeEvent args)
-        => RefreshPilot(component.Frame);
+    {
+        RefreshPilot(component.Frame);
+    }
 
     private void OnPilotAppearanceChanged(EntityUid uid, PowerArmorPilotComponent component, ref VisualsChangedEvent args)
-        => RefreshPilot(component.Frame);
+    {
+        RefreshPilot(component.Frame);
+    }
 
     private void RefreshPilot(EntityUid frame)
     {
@@ -320,47 +327,35 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
 
         // Undergarments are marking layers that HumanoidAppearanceSystem adds a beat after insert.
         // No timer retry: their appearance event re-runs this whole refresh, which hides them.
-        // Mirror head/accessories to the frame sprite.
-        EnsureMirroredLayers(frameUid, frameSprite, pilotSprite, pilotUid, helmeted);
+        MirrorPilotLayers(ent, frameUid, pilotUid, frameSprite, pilotSprite, helmeted);
     }
 
-    private static bool IsHeadAccessorySlot(string slotName)
-    {
-        return Array.IndexOf(AccessorySlots, slotName) != -1;
-    }
-
-    private void EnsureMirroredLayers(EntityUid frameUid, SpriteComponent frameSprite, SpriteComponent pilotSprite, EntityUid pilotUid, bool helmeted)
+    /// <summary>Rebuilds every layer mirrored from the occupant: head and accessories.</summary>
+    private void MirrorPilotLayers(Entity<PowerArmorFrameComponent> ent, EntityUid frameUid, EntityUid pilotUid,
+        SpriteComponent frameSprite, SpriteComponent pilotSprite, bool helmeted)
     {
         // Clear first: recomputing from current kit stranded hats removed mid-exit.
         ClearMirroredLayers(frameUid, frameSprite);
 
         // Anchored past the helmet so armour covers the face; the chassis anchor drew masks over it.
-        if (!_sprite.LayerMapTryGet((frameUid, frameSprite), PowerArmorVisualLayers.Helmet, out var frameLayerIndex, false)
-            && !_sprite.LayerMapTryGet((frameUid, frameSprite), PowerArmorVisualLayers.Frame, out frameLayerIndex, false))
+        if (!_sprite.LayerMapTryGet((frameUid, frameSprite), PowerArmorVisualLayers.Helmet, out var anchor, false)
+            && !_sprite.LayerMapTryGet((frameUid, frameSprite), PowerArmorVisualLayers.Frame, out anchor, false))
         {
             return;
         }
 
-        // Align the head with the collar notch.
-        var headLift = Vector2.Zero;
-        if (TryComp<PowerArmorFrameComponent>(frameUid, out var frameComp))
-            headLift = frameComp.PilotHeadOffset;
-
         // Local, not the shared set: a re-entrant refresh would clear it and blow the indices.
         var mirrored = new HashSet<string>();
+        var headLift = ent.Comp.PilotHeadOffset;
 
-        // 1. Copy base humanoid head layers (includes Hair, FacialHair base layers).
         foreach (var headLayer in HeadLayers)
         {
             var key = FrameLayerKey(headLayer);
-            CopyLayerToFrame(frameUid, frameSprite, pilotSprite, pilotUid, headLayer, key, frameLayerIndex, mirrored, helmeted, headLift);
+            CopyLayerToFrame(frameUid, frameSprite, pilotSprite, pilotUid, headLayer, key, anchor, mirrored, helmeted, headLift);
         }
 
-        // 2. Copy hair/facial hair MARKING layers (the actual hair sprites).
-        // 2. Hair and facial hair marking layers, keyed "<marking>-<state>".
-        CopyHairMarkingLayers(frameUid, frameSprite, pilotSprite, pilotUid, frameLayerIndex, mirrored, helmeted, headLift);
+        CopyHairMarkingLayers(frameUid, frameSprite, pilotSprite, pilotUid, anchor, mirrored, helmeted, headLift);
 
-        // 3. Clothing layers for head/face slots.
         if (TryComp<InventorySlotsComponent>(pilotUid, out var inventorySlots))
         {
             foreach (var slotName in AccessorySlots)
@@ -370,15 +365,20 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
 
                 foreach (var pilotKey in layerKeys)
                 {
-                    CopyAccessoryLayerToFrameDynamic(frameUid, frameSprite, pilotSprite, pilotUid, pilotKey, frameLayerIndex, mirrored, helmeted, headLift);
+                    CopyAccessoryLayerToFrameDynamic(frameUid, frameSprite, pilotSprite, pilotUid, pilotKey, anchor, mirrored, helmeted, headLift);
                 }
             }
         }
 
         // Committed last, so a re-entrant refresh cannot strand a half-built set.
-        if (frameComp != null)
-            frameComp.MirroredKeys = mirrored;
+        ent.Comp.MirroredKeys = mirrored;
     }
+
+    private static bool IsHeadAccessorySlot(string slotName)
+    {
+        return Array.IndexOf(AccessorySlots, slotName) != -1;
+    }
+
 
     private void CopyHairMarkingLayers(EntityUid frameUid, SpriteComponent frameSprite, SpriteComponent pilotSprite, EntityUid pilotUid,
         int frameLayerIndex, HashSet<string> mirrored, bool helmeted, Vector2 headLift)
@@ -396,15 +396,22 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
         HumanoidVisualLayers headLayer, string frameKey, int frameLayerIndex, HashSet<string> mirrored,
         bool helmeted, Vector2 headLift)
     {
-        if (_sprite.LayerMapTryGet((frameUid, frameSprite), frameKey, out _, false))
-            _sprite.RemoveLayer((frameUid, frameSprite), frameKey, false);
-
         if (!_sprite.LayerMapTryGet((pilotUid, pilotSprite), headLayer, out var pilotLayerIndex, false))
             return;
 
         var pilotLayer = (Layer)pilotSprite[pilotLayerIndex];
 
-        var newIndex = frameLayerIndex + 1 + mirrored.Count;
+        if (_sprite.LayerMapTryGet((frameUid, frameSprite), frameKey, out var existing, false))
+        {
+            // Updated in place. Removing first dropped the layer count while mirrored.Count stayed
+            // put, so the next computed index overshot the sprite and AddLayer threw.
+            CopyLayerData(pilotLayer, (Layer)frameSprite[existing], helmeted, headLift);
+            mirrored.Add(frameKey);
+            return;
+        }
+
+        // Clamped so a stale anchor appends rather than walking off the end of the sprite.
+        var newIndex = Math.Min(frameLayerIndex + 1 + mirrored.Count, frameSprite.AllLayers.Count());
         var newLayer = _sprite.AddBlankLayer((frameUid, frameSprite), newIndex);
 
         _sprite.LayerMapSet((frameUid, frameSprite), frameKey, newIndex);
@@ -419,9 +426,6 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
     {
         var frameKey = FrameExtraKey(pilotKey);
 
-        if (_sprite.LayerMapTryGet((frameUid, frameSprite), frameKey, out _, false))
-            _sprite.RemoveLayer((frameUid, frameSprite), frameKey, false);
-
         if (!_sprite.LayerMapTryGet((pilotUid, pilotSprite), pilotKey, out var pilotLayerIndex, false))
             return;
 
@@ -429,7 +433,15 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
         if (!pilotLayer.Visible)
             return;
 
-        var newIndex = frameLayerIndex + 1 + mirrored.Count;
+        if (_sprite.LayerMapTryGet((frameUid, frameSprite), frameKey, out var existing, false))
+        {
+            CopyLayerData(pilotLayer, (Layer)frameSprite[existing], helmeted, headLift);
+            mirrored.Add(frameKey);
+            return;
+        }
+
+        // Clamped so a stale anchor appends rather than walking off the end of the sprite.
+        var newIndex = Math.Min(frameLayerIndex + 1 + mirrored.Count, frameSprite.AllLayers.Count());
         var newLayer = _sprite.AddBlankLayer((frameUid, frameSprite), newIndex);
 
         _sprite.LayerMapSet((frameUid, frameSprite), frameKey, newIndex);
@@ -470,6 +482,7 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
         frame.MirroredKeys.Clear();
     }
 
+
     private void RestorePilotVisuals(EntityUid frameUid, EntityUid pilot)
     {
         if (!TryComp<SpriteComponent>(frameUid, out var frameSprite))
@@ -482,14 +495,23 @@ public sealed partial class PowerArmorVisualSystem : SharedPowerArmorSystem
             // The sprite was hidden for the whole ride.
             _sprite.SetVisible((pilot, pilotSprite), true);
 
-            // Clears HiddenLayers only, so severed limbs and other systems' layers survive.
             TryComp<HumanoidAppearanceComponent>(pilot, out var humanoid);
-            _humanoidAppearance.SetLayersVisibility(pilot, BodyLayersToRestore, true, humanoid: humanoid);
-            _humanoidAppearance.SetLayersVisibility(pilot, HeadLayers, true, humanoid: humanoid);
+
+            SetLayerVisible(pilot, pilotSprite, BodyLayersToRestore, visible: true);
+            SetLayerVisible(pilot, pilotSprite, HeadLayers, visible: true);
 
             SetClothingLayers(pilot, pilotSprite, visible: true, spareHeadAccessories: false);
             SetMarkingLayers(pilot, pilotSprite, humanoid, HairCategories, visible: true);
             SetMarkingLayers(pilot, pilotSprite, humanoid, UndergarmentCategories, visible: true);
+        }
+    }
+
+    private void SetLayerVisible(EntityUid uid, SpriteComponent sprite, HumanoidVisualLayers[] layers, bool visible)
+    {
+        foreach (var layer in layers)
+        {
+            if (_sprite.LayerMapTryGet((uid, sprite), layer, out var index, false))
+                _sprite.LayerSetVisible((Layer)sprite[index], visible);
         }
     }
 }

@@ -18,6 +18,7 @@ using Content.Shared.Hands;
 using Content.Shared.Hands.Components;
 using Content.Shared.Item;
 using Content.Shared.Mech.Components; // Goobstation
+using Content.Shared.PowerArmor;
 using Content.Shared._Misfits.CCVar;
 using Content.Shared._Misfits.Random;
 using Content.Shared._Misfits.Weapons;
@@ -685,6 +686,11 @@ public abstract partial class SharedGunSystem : EntitySystem
 
         if (TryComp<MechPilotComponent>(shooter, out var mechPilot))
             return mechPilot.Mech;
+
+        // A frame pilot sits inside the chassis, so without this the ray starts inside the
+        // frame's own fixture and the hitscan beam collapses.
+        if (TryComp<PowerArmorPilotComponent>(shooter, out var armorPilot))
+            return armorPilot.Frame;
 
         return null;
     }
